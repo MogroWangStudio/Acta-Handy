@@ -21,4 +21,8 @@
 - 菜单栏 / 系统托盘：快速打开设置、开关各窗口、退出应用。
 - GitHub Actions 自动构建：Windows x64 便携版（免安装 exe）与 macOS Apple Silicon（arm64 dmg）。
 
+### 修复
+
+- macOS 上小组件与悬浮窗从未创建：Tauri 平台配置合并时 `windows` 数组整体替换基础配置，`tauri.macos.conf.json` 必须完整列出全部窗口及其所有字段（平台配置中省略的字段回退到默认值，而非基础配置值）。
+
 [0.1.0]: #

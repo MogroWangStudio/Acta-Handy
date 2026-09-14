@@ -4,6 +4,7 @@
     "windows": [
       {
         "label": "main",
+        "title": "Acta Handy · 行记便易",
         "width": 940,
         "height": 640,
         "minWidth": 860,
@@ -15,6 +16,49 @@
         "titleBarStyle": "Overlay",
         "trafficLightPosition": { "x": 18, "y": 18 },
         "resizable": true,
+        "fullscreen": false
+      },
+      {
+        "label": "todo-widget",
+        "title": "Acta Handy · 待办",
+        "width": 300,
+        "height": 360,
+        "minWidth": 240,
+        "minHeight": 220,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": true,
+        "skipTaskbar": true,
+        "fullscreen": false
+      },
+      {
+        "label": "notes-widget",
+        "title": "Acta Handy · 笔记",
+        "width": 300,
+        "height": 380,
+        "minWidth": 240,
+        "minHeight": 240,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": true,
+        "skipTaskbar": true,
+        "fullscreen": false
+      },
+      {
+        "label": "hud",
+        "title": "Acta Handy · 悬浮窗",
+        "width": 292,
+        "height": 66,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "skipTaskbar": true,
         "fullscreen": false
       }
     ]
