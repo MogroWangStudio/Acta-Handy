@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { countsFor } from "../lib/view";
 import { shortDate } from "../lib/format";
@@ -11,7 +11,7 @@ import LogoWordmark from "../components/LogoWordmark.vue";
 import SelectMenu from "../components/SelectMenu.vue";
 import type { IconName } from "../types/icons";
 
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.3.0";
 
 type SectionId = "data" | "todoWidget" | "notesWidget" | "hud" | "general" | "about";
 const active = ref<SectionId>("data");
@@ -99,10 +99,21 @@ async function closeWindow(): Promise<void> {
   await win.close(); // Rust intercepts close and hides instead.
 }
 
+// 最大化状态下，Windows 控件应显示「还原」而非「最大化」。
+const maximized = ref(false);
+let unlistenResized: (() => void) | null = null;
+
 onMounted(async () => {
+  maximized.value = await win.isMaximized().catch(() => false);
+  unlistenResized = await win.onResized(async () => {
+    maximized.value = await win.isMaximized().catch(() => false);
+  });
   await initStore();
   await new Promise((r) => setTimeout(r, 60));
   await showWindow("main");
+});
+onBeforeUnmount(() => {
+  unlistenResized?.();
 });
 </script>
 
@@ -112,9 +123,11 @@ onMounted(async () => {
       <span class="brand"><LogoWordmark :height="28" /></span>
       <span v-if="platform === 'darwin'" class="spacer" />
       <div v-else class="window-controls">
-        <button title="最小化" @click="minimize"><span class="line" /></button>
-        <button title="最大化" @click="toggleMaximize"><span class="box" /></button>
-        <button title="关闭" class="close" @click="closeWindow"><span class="line" /></button>
+        <button title="最小化" @click="minimize"><span class="glyph minimize" /></button>
+        <button :title="maximized ? '还原' : '最大化'" @click="toggleMaximize">
+          <span class="glyph" :class="maximized ? 'restore' : 'maximize'" />
+        </button>
+        <button title="关闭" class="close" @click="closeWindow"><span class="glyph close" /></button>
       </div>
     </div>
 
@@ -336,8 +349,39 @@ onMounted(async () => {
 }
 .window-controls button:hover { background: rgba(42, 48, 41, .09); }
 .window-controls button.close:hover { background: #c42b1c; color: #fff; }
-.window-controls .line { width: 10px; height: 1px; background: currentColor; }
-.window-controls .box { width: 10px; height: 10px; border: 1px solid currentColor; }
+/* 10px 见方的控件字形：横线、方框、还原双框、关闭 ×。 */
+.window-controls .glyph {
+  position: relative;
+  display: block;
+  width: 10px;
+  height: 10px;
+}
+.window-controls .glyph.minimize { height: 1px; background: currentColor; }
+.window-controls .glyph.maximize { border: 1px solid currentColor; }
+.window-controls .glyph.restore { border: 1px solid currentColor; background: var(--sidebar); }
+.window-controls .glyph.restore::before {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid currentColor;
+  border-bottom: 0;
+  border-left: 0;
+}
+.window-controls .glyph.close::before,
+.window-controls .glyph.close::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 10px;
+  height: 1px;
+  background: currentColor;
+}
+.window-controls .glyph.close::before { transform: rotate(45deg); }
+.window-controls .glyph.close::after { transform: rotate(-45deg); }
 
 /* --- layout --- */
 .layout {

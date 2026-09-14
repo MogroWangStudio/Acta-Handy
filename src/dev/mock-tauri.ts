@@ -198,6 +198,8 @@ function invoke(cmd: string, args: Record<string, unknown>): unknown {
       return nextCallbackId++;
     case "plugin:event|unlisten":
       return null;
+    case "plugin:window|is_maximized":
+      return false;
     case "plugin:dialog|open":
       return "/Users/demo/Acta 数据文件夹";
     default:

@@ -29,7 +29,8 @@ const subtasks = computed(() => taskProgress(props.todo));
 </script>
 
 <template>
-  <li class="todo-row" :class="{ done, expandable }">
+  <!-- 整行都是展开的点击目标；勾选框与子任务列表自行拦截点击。 -->
+  <li class="todo-row" :class="{ done, expandable }" @click="expandable && (expanded = !expanded)">
     <button
       type="button"
       class="todo-check"
@@ -41,7 +42,7 @@ const subtasks = computed(() => taskProgress(props.todo));
         <path d="M5 12.5l4.5 4.5L19 7.5" />
       </svg>
     </button>
-    <span class="todo-main" @click="expandable && (expanded = !expanded)">
+    <span class="todo-main">
       <span class="todo-title">{{ todo.title || t("untitledTodo") }}</span>
       <span v-if="expandable && !expanded" class="todo-sub">{{ t("subtaskOf")(subtasks.done, subtasks.total) }}</span>
     </span>
@@ -53,7 +54,7 @@ const subtasks = computed(() => taskProgress(props.todo));
       </svg>
     </span>
 
-    <ul v-if="expanded" class="task-list">
+    <ul v-if="expanded" class="task-list" @click.stop>
       <li v-for="task in todo.tasks" :key="task.id" class="task-row" :class="{ done: task.done }">
         <button
           type="button"
@@ -81,9 +82,11 @@ const subtasks = computed(() => taskProgress(props.todo));
   align-items: center;
   padding: 5px 0;
   border-bottom: 1px solid rgba(47, 52, 45, .07);
+  border-radius: 8px;
   animation: rowIn .4s var(--ease-out) both;
 }
-.todo-row.expandable { cursor: pointer; }
+.todo-row.expandable { cursor: pointer; transition: background .15s ease; }
+.todo-row.expandable:hover { background: color-mix(in srgb, var(--sage-2) 45%, transparent); }
 .todo-row:last-child { border-bottom: 0; }
 html[data-handy-theme="dark"] .todo-row { border-bottom-color: rgba(255, 255, 255, .07); }
 
@@ -133,6 +136,7 @@ html[data-handy-theme="dark"] .todo-check.on { color: var(--sidebar); }
   list-style: none;
   display: flex;
   flex-direction: column;
+  animation: taskListIn .22s var(--ease-out) both;
 }
 .task-row {
   min-height: 27px;
@@ -172,6 +176,12 @@ html[data-handy-theme="dark"] .task-check.on { color: var(--sidebar); }
 
 @keyframes rowIn {
   from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 展开方向与 chevron 一致：内容自上而下浮现。 */
+@keyframes taskListIn {
+  from { opacity: 0; transform: translateY(-3px); }
   to { opacity: 1; transform: translateY(0); }
 }
 </style>

@@ -427,7 +427,12 @@ fn item_file_base_name(id: &str) -> String {
 fn write_file_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let tmp = PathBuf::from(format!("{}.tmp", path.display()));
     fs::write(&tmp, bytes).map_err(|e| format!("无法写入 {}：{e}", path.display()))?;
-    fs::rename(&tmp, path).map_err(|e| format!("无法保存 {}：{e}", path.display()))?;
+    // Windows 的 rename 拒绝覆盖已存在的文件，编辑任何已有条目都会失败；
+    // 那种情况下退化为 copy + 清理临时文件，保证两个平台都能落盘。
+    if fs::rename(&tmp, path).is_err() {
+        fs::copy(&tmp, path).map_err(|e| format!("无法保存 {}：{e}", path.display()))?;
+        let _ = fs::remove_file(&tmp);
+    }
     Ok(())
 }
 
@@ -618,6 +623,8 @@ pub fn write_note(folder: &Path, patch: &NotePatch) -> Result<ActaNote, String> 
 }
 
 fn create_note(folder: &Path, manifest: &mut Value, patch: &NotePatch) -> Result<ActaNote, String> {
+    // 全新同步的数据文件夹可能还没有 notes/ 目录。
+    fs::create_dir_all(folder.join("notes")).map_err(|e| format!("无法创建 notes 目录：{e}"))?;
     let id = gen_item_id();
     let base_name = item_file_base_name(&id);
     let config_file = format!("{base_name}.json");
