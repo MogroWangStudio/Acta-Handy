@@ -1,0 +1,37 @@
+{
+  "name": "acta-handy",
+  "version": "0.1.0",
+  "description": "Acta Handy 行记·便易 — 把 Acta 的行记数据带到桌面上：待办小组件、笔记小组件与悬浮窗。",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "windows:portable": "tauri build --no-bundle --target x86_64-pc-windows-msvc",
+    "macos:build": "tauri build --bundles app,dmg --target aarch64-apple-darwin"
+  },
+  "keywords": [
+    "tauri",
+    "vue",
+    "widgets",
+    "acta"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "author": "MogroWang Studio",
+  "license": "MIT",
+  "dependencies": {
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.0",
+    "vue-tsc": "^3.0.0"
+  }
+}

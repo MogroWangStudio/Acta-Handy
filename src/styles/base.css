@@ -1,0 +1,167 @@
+* { box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  color: var(--ink);
+  background: transparent;
+  font-family: var(--font-body);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+button, input, select, textarea { font: inherit; }
+button { color: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--sage) 35%, transparent);
+  outline-offset: 2px;
+}
+
+[hidden] { display: none !important; }
+
+/* Thin rounded scrollbars, borrowed from Acta. */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb {
+  border: 3.5px solid transparent;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--muted) 34%, transparent);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--muted) 56%, transparent); }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+
+/* --- shared primitives ---------------------------------------------------- */
+
+.section-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.priority-pill {
+  height: 19px;
+  padding: 0 6px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+.priority-pill.high { color: var(--priority-high-ink); background: var(--priority-high-bg); }
+.priority-pill.medium { color: var(--priority-medium-ink); background: var(--priority-medium-bg); }
+.priority-pill.low { color: var(--sage); background: var(--sage-2); }
+
+.type-pill {
+  height: 19px;
+  padding: 0 7px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.type-pill.todo { color: var(--sage); background: var(--sage-2); }
+.type-pill.note { color: var(--violet); background: var(--violet-soft); }
+
+.progress-track {
+  height: 5px;
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.progress-track i {
+  display: block;
+  height: 100%;
+  background: var(--sage);
+  border-radius: inherit;
+  transition: width .7s var(--ease-out);
+}
+
+.folder-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
+}
+
+/* Settings-style switch, consistent across macOS and Windows. */
+.switch {
+  position: relative;
+  width: 34px;
+  height: 19px;
+  flex: 0 0 auto;
+  border: 0;
+  padding: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
+  cursor: pointer;
+  transition: background .2s ease;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2.5px;
+  left: 2.5px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--white);
+  box-shadow: 0 1px 2px rgba(24, 28, 23, .25);
+  transition: transform .3s var(--ease-out);
+}
+.switch[aria-checked="true"] { background: var(--sage); }
+.switch[aria-checked="true"]::after { transform: translateX(15px); }
+.switch:focus-visible { outline: 2px solid color-mix(in srgb, var(--sage) 35%, transparent); outline-offset: 2px; }
+
+.settings-button {
+  min-height: 37px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--paper);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  transition: background .15s ease, transform .18s var(--ease-out), box-shadow .18s ease;
+}
+.settings-button:hover { transform: scale(1.03); background: #30362f; box-shadow: 0 5px 12px -4px rgba(35, 40, 34, .14); }
+.settings-button:active { transform: scale(.97); transition-duration: .08s; }
+html[data-handy-theme="dark"] .settings-button:hover { background: #d6d6d6; color: var(--sidebar); }
+.settings-button.secondary {
+  border: 1px solid var(--line);
+  background: var(--white);
+  color: var(--ink);
+  box-shadow: none;
+}
+.settings-button.secondary:hover { background: var(--panel); }
+.settings-button:disabled { opacity: .4; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "width": 940,
+        "height": 640,
+        "minWidth": 860,
+        "minHeight": 560,
+        "visible": false,
+        "transparent": true,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 18, "y": 18 },
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  },
+  "bundle": {
+    "targets": ["app", "dmg"],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  }
+}

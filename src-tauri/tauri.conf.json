@@ -1,0 +1,89 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Acta Handy",
+  "version": "0.1.0",
+  "identifier": "com.mogrowangstudio.actahandy",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Acta Handy · 行记便易",
+        "width": 940,
+        "height": 640,
+        "minWidth": 860,
+        "minHeight": 560,
+        "backgroundColor": "#ebe7dc",
+        "visible": false,
+        "decorations": false,
+        "resizable": true,
+        "fullscreen": false
+      },
+      {
+        "label": "todo-widget",
+        "title": "Acta Handy · 待办",
+        "width": 300,
+        "height": 360,
+        "minWidth": 240,
+        "minHeight": 220,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": true,
+        "skipTaskbar": true,
+        "fullscreen": false
+      },
+      {
+        "label": "notes-widget",
+        "title": "Acta Handy · 笔记",
+        "width": 300,
+        "height": 380,
+        "minWidth": 240,
+        "minHeight": 240,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": true,
+        "skipTaskbar": true,
+        "fullscreen": false
+      },
+      {
+        "label": "hud",
+        "title": "Acta Handy · 悬浮窗",
+        "width": 292,
+        "height": 66,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "category": "Productivity",
+    "shortDescription": "Acta 的桌面小组件与悬浮窗",
+    "longDescription": "Acta Handy 行记·便易读取 Acta 的行记数据文件夹，把待办与笔记以桌面小组件和悬浮窗的形式常驻桌面。",
+    "copyright": "Copyright © MogroWang Studio",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

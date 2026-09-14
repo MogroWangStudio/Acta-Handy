@@ -1,0 +1,16 @@
+export type IconName =
+  | "note"
+  | "todo"
+  | "database"
+  | "sliders"
+  | "hud"
+  | "sun"
+  | "moon"
+  | "globe"
+  | "info"
+  | "refresh"
+  | "folder"
+  | "calendar"
+  | "alert"
+  | "check"
+  | "palette";
