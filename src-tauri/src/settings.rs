@@ -75,6 +75,12 @@ pub struct HudConfig {
     pub y: Option<f64>,
     pub opacity: f64,
     pub always_on_top: bool,
+    /// Pill mode: dock to the nearest screen edge and expand on hover.
+    pub snap_to_edge: bool,
+    /// Stealth mode: fade out after a delay, fade back in when the pointer
+    /// comes near again.
+    pub stealth: bool,
+    pub stealth_delay_secs: u32,
 }
 
 impl Default for HudConfig {
@@ -85,6 +91,9 @@ impl Default for HudConfig {
             y: None,
             opacity: 1.0,
             always_on_top: true,
+            snap_to_edge: false,
+            stealth: false,
+            stealth_delay_secs: 15,
         }
     }
 }
@@ -112,6 +121,7 @@ impl HandySettings {
             cfg.opacity = cfg.opacity.clamp(0.3, 1.0);
         }
         self.hud.opacity = self.hud.opacity.clamp(0.3, 1.0);
+        self.hud.stealth_delay_secs = self.hud.stealth_delay_secs.clamp(5, 600);
         self
     }
 }

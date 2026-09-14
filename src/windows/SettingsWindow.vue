@@ -8,9 +8,10 @@ import { initStore, persistSettings, refreshActaData, store } from "../lib/store
 import { pickDataFolder, refreshData, showWindow } from "../lib/api";
 import AppIcon from "../components/AppIcon.vue";
 import LogoWordmark from "../components/LogoWordmark.vue";
+import SelectMenu from "../components/SelectMenu.vue";
 import type { IconName } from "../types/icons";
 
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.2.0";
 
 type SectionId = "data" | "todoWidget" | "notesWidget" | "hud" | "general" | "about";
 const active = ref<SectionId>("data");
@@ -49,6 +50,29 @@ const INTERVALS = [
   { value: 300, label: () => `5 ${t("minutes")}` },
 ];
 
+const STEALTH_DELAYS = [
+  { value: 5, label: () => `5 ${t("seconds")}` },
+  { value: 10, label: () => `10 ${t("seconds")}` },
+  { value: 15, label: () => `15 ${t("seconds")}` },
+  { value: 30, label: () => `30 ${t("seconds")}` },
+  { value: 60, label: () => `1 ${t("minutes")}` },
+  { value: 120, label: () => `2 ${t("minutes")}` },
+];
+
+const intervalOptions = computed(() => INTERVALS.map((o) => ({ value: o.value, label: o.label() })));
+const stealthDelayOptions = computed(() => STEALTH_DELAYS.map((o) => ({ value: o.value, label: o.label() })));
+
+const THEME_OPTIONS = computed(() => [
+  { value: "auto", label: t("themeAuto") },
+  { value: "light", label: t("themeLight") },
+  { value: "dark", label: t("themeDark") },
+]);
+
+const LANGUAGE_OPTIONS = [
+  { value: "zh", label: "简体中文" },
+  { value: "en", label: "English" },
+];
+
 async function save(): Promise<void> {
   await persistSettings(store.settings);
 }
@@ -85,7 +109,7 @@ onMounted(async () => {
 <template>
   <div class="shell" :data-platform="platform">
     <div class="titlebar" data-tauri-drag-region>
-      <span class="brand"><LogoWordmark :height="22" /></span>
+      <span class="brand"><LogoWordmark :height="28" /></span>
       <span v-if="platform === 'darwin'" class="spacer" />
       <div v-else class="window-controls">
         <button title="最小化" @click="minimize"><span class="line" /></button>
@@ -141,9 +165,7 @@ onMounted(async () => {
                 <b>{{ t("refreshInterval") }}</b>
                 <small>{{ t("refreshIntervalDesc") }}</small>
               </span>
-              <select v-model.number="store.settings.refreshIntervalSecs" @change="save">
-                <option v-for="option in INTERVALS" :key="option.value" :value="option.value">{{ option.label() }}</option>
-              </select>
+              <SelectMenu v-model="store.settings.refreshIntervalSecs" :options="intervalOptions" @update:model-value="save" />
             </div>
           </div>
           <p v-if="store.dataError" class="status error">{{ store.dataError }}</p>
@@ -222,6 +244,18 @@ onMounted(async () => {
               <span class="row-copy"><b>{{ t("alwaysOnTop") }}</b><small>{{ t("hudAlwaysOnTopDesc") }}</small></span>
               <button class="switch" role="switch" :aria-checked="store.settings.hud.alwaysOnTop" @click="store.settings.hud.alwaysOnTop = !store.settings.hud.alwaysOnTop; save()" />
             </div>
+            <div class="row">
+              <span class="row-copy"><b>{{ t("hudSnapToEdge") }}</b><small>{{ t("hudSnapToEdgeDesc") }}</small></span>
+              <button class="switch" role="switch" :aria-checked="store.settings.hud.snapToEdge" @click="store.settings.hud.snapToEdge = !store.settings.hud.snapToEdge; save()" />
+            </div>
+            <div class="row">
+              <span class="row-copy"><b>{{ t("hudStealth") }}</b><small>{{ t("hudStealthDesc") }}</small></span>
+              <button class="switch" role="switch" :aria-checked="store.settings.hud.stealth" @click="store.settings.hud.stealth = !store.settings.hud.stealth; save()" />
+            </div>
+            <div class="row">
+              <span class="row-copy"><b>{{ t("hudStealthDelay") }}</b><small>{{ t("hudStealthDelayDesc") }}</small></span>
+              <SelectMenu v-model="store.settings.hud.stealthDelaySecs" :options="stealthDelayOptions" @update:model-value="save" />
+            </div>
           </div>
         </section>
 
@@ -233,18 +267,11 @@ onMounted(async () => {
           <div class="group">
             <div class="row">
               <span class="row-copy"><b>{{ t("theme") }}</b></span>
-              <select v-model="store.settings.theme" @change="save">
-                <option value="auto">{{ t("themeAuto") }}</option>
-                <option value="light">{{ t("themeLight") }}</option>
-                <option value="dark">{{ t("themeDark") }}</option>
-              </select>
+              <SelectMenu v-model="store.settings.theme" :options="THEME_OPTIONS" @update:model-value="save" />
             </div>
             <div class="row">
               <span class="row-copy"><b>{{ t("language") }}</b></span>
-              <select v-model="store.settings.language" @change="save">
-                <option value="zh">简体中文</option>
-                <option value="en">English</option>
-              </select>
+              <SelectMenu v-model="store.settings.language" :options="LANGUAGE_OPTIONS" @update:model-value="save" />
             </div>
           </div>
         </section>
@@ -254,13 +281,13 @@ onMounted(async () => {
           <header>
             <h3>{{ t("navAbout") }}</h3>
           </header>
-          <div class="about-mark"><LogoWordmark :height="40" /></div>
+          <div class="about-mark"><LogoWordmark :height="52" /></div>
           <div class="group">
             <div class="row">
               <span class="row-copy"><b>{{ t("aboutTitle") }}</b><small>{{ t("aboutDesc") }}</small></span>
             </div>
             <div class="row">
-              <span class="row-copy"><b>{{ t("aboutReadonly") }}</b><small>{{ t("aboutReadonlyDesc") }}</small></span>
+              <span class="row-copy"><b>{{ t("aboutWrite") }}</b><small>{{ t("aboutWriteDesc") }}</small></span>
             </div>
           </div>
           <div class="meta-grid">
@@ -360,7 +387,6 @@ onMounted(async () => {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: color-mix(in srgb, var(--white) 40%, transparent);
-  overflow: hidden;
 }
 .row {
   min-height: 58px;
@@ -374,18 +400,6 @@ onMounted(async () => {
 .row-copy b { font-size: 13px; }
 .row-copy small { color: var(--faint); font-size: 11px; line-height: 1.45; }
 .row-actions { display: flex; gap: 8px; flex: 0 0 auto; }
-
-.row select {
-  height: 33px;
-  padding: 0 28px 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--white);
-  color: var(--ink);
-  outline: 0;
-  font-size: 12px;
-  cursor: pointer;
-}
 
 .mono { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

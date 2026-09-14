@@ -20,6 +20,11 @@ export interface HudConfig {
   y: number | null;
   opacity: number;
   alwaysOnTop: boolean;
+  /** 药丸模式：吸附到最近的屏幕边缘，鼠标移过时展开快速编辑面板。 */
+  snapToEdge: boolean;
+  /** 隐匿模式：超过设定延迟后淡出，鼠标靠近时再淡入。 */
+  stealth: boolean;
+  stealthDelaySecs: number;
 }
 
 export interface HandySettings {
@@ -65,5 +70,8 @@ export const DEFAULT_SETTINGS: HandySettings = {
     y: null,
     opacity: 1,
     alwaysOnTop: true,
+    snapToEdge: false,
+    stealth: false,
+    stealthDelaySecs: 15,
   },
 };

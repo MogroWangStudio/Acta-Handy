@@ -1,6 +1,6 @@
 [package]
 name = "acta-handy"
-version = "0.1.0"
+version = "0.2.0"
 description = "Acta Handy · 行记便易"
 authors = ["MogroWang Studio"]
 edition = "2021"

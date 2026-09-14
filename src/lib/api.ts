@@ -1,11 +1,34 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { ActaData } from "../types/acta";
+import type { ActaData, ActaNote, ActaTodo } from "../types/acta";
 import type { HandySettings } from "../types/settings";
 
 export function readActaData(folder: string): Promise<ActaData> {
   return invoke<ActaData>("read_acta_data", { folder });
+}
+
+export interface TodoCheckPatch {
+  todoId: string;
+  completed: boolean;
+  tasks: Array<{ id: string; done: boolean }>;
+}
+
+/** 勾选待办 / 子待办，写回 Acta 数据文件夹并返回落盘后的待办。 */
+export function writeTodoCheck(folder: string, patch: TodoCheckPatch): Promise<ActaTodo> {
+  return invoke<ActaTodo>("write_todo_check", { folder, patch });
+}
+
+export interface NotePatch {
+  noteId?: string | null;
+  title?: string | null;
+  bodyMarkdown?: string | null;
+  folderId?: string | null;
+}
+
+/** 新建 / 编辑笔记，写回 Acta 数据文件夹并返回落盘后的笔记。 */
+export function writeNote(folder: string, patch: NotePatch): Promise<ActaNote> {
+  return invoke<ActaNote>("write_note", { folder, patch });
 }
 
 export function loadSettings(): Promise<HandySettings> {
@@ -28,6 +51,16 @@ export function quitApp(): Promise<void> {
   return invoke("quit_app");
 }
 
+/** 切换悬浮窗形态；返回药丸贴在哪一侧（"left" / "right"），信息条为 null。 */
+export function setHudMode(mode: "bar" | "pill" | "panel"): Promise<"left" | "right" | null> {
+  return invoke<"left" | "right" | null>("set_hud_mode", { mode });
+}
+
+/** 隐匿淡出后开启光标监控；鼠标靠近窗口时后端会广播 hud-wake。 */
+export function setHudCursorWatch(watch: boolean): Promise<void> {
+  return invoke("set_hud_cursor_watch", { watch });
+}
+
 export function pickDataFolder(): Promise<string | null> {
   return open({
     directory: true,
@@ -42,4 +75,8 @@ export function onDataChanged(cb: () => void): Promise<void> {
 
 export function onSettingsChanged(cb: (settings: HandySettings) => void): Promise<void> {
   return listen<HandySettings>("settings-changed", (e) => cb(e.payload)).then(() => undefined);
+}
+
+export function onHudWake(cb: () => void): Promise<void> {
+  return listen("hud-wake", () => cb()).then(() => undefined);
 }

@@ -4,6 +4,7 @@ mod acta;
 mod settings;
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -16,12 +17,58 @@ use settings::HandySettings;
 const TRAY_ID: &str = "acta-handy-tray";
 const WIDGET_LABELS: [&str; 3] = ["todo-widget", "notes-widget", "hud"];
 
+/// HUD shapes. `Bar` is the classic floating strip; `Pill` is the docked
+/// capsule; `Panel` is the expanded quick-edit panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HudMode {
+    Bar,
+    Pill,
+    Panel,
+}
+
+const HUD_BAR: (f64, f64) = (292.0, 66.0);
+const HUD_PILL: (f64, f64) = (56.0, 68.0);
+const HUD_PANEL: (f64, f64) = (324.0, 460.0);
+
+/// While true, a watcher thread polls the cursor and wakes the HUD when the
+/// pointer comes near (stealth mode keeps the window invisible otherwise).
+static HUD_WATCH: AtomicBool = AtomicBool::new(false);
+static HUD_WATCH_RUNNING: AtomicBool = AtomicBool::new(false);
+
 #[tauri::command]
 fn read_acta_data(folder: String) -> Result<acta::ActaData, String> {
     if folder.trim().is_empty() {
         return Err("尚未选择 Acta 数据文件夹".to_string());
     }
     acta::read_data_folder(std::path::Path::new(&folder))
+}
+
+#[tauri::command]
+fn write_todo_check(
+    app: AppHandle,
+    folder: String,
+    patch: acta::TodoCheckPatch,
+) -> Result<acta::ActaTodo, String> {
+    if folder.trim().is_empty() {
+        return Err("尚未选择 Acta 数据文件夹".to_string());
+    }
+    let todo = acta::write_todo_check(std::path::Path::new(&folder), &patch)?;
+    let _ = app.emit("acta-data-changed", ());
+    Ok(todo)
+}
+
+#[tauri::command]
+fn write_note(
+    app: AppHandle,
+    folder: String,
+    patch: acta::NotePatch,
+) -> Result<acta::ActaNote, String> {
+    if folder.trim().is_empty() {
+        return Err("尚未选择 Acta 数据文件夹".to_string());
+    }
+    let note = acta::write_note(std::path::Path::new(&folder), &patch)?;
+    let _ = app.emit("acta-data-changed", ());
+    Ok(note)
 }
 
 #[tauri::command]
@@ -40,6 +87,125 @@ fn show_window(app: AppHandle, label: String) {
 #[tauri::command]
 fn quit_app(app: AppHandle) {
     app.exit(0);
+}
+
+/// Resize/position the HUD for a shape. Returns which screen edge the pill is
+/// docked to ("left"/"right"), or None for the free-floating bar.
+/// With `restore`, the saved settings position wins (app startup / settings
+/// change); otherwise the window keeps its live position (pill ↔ panel).
+fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<&'static str> {
+    let window = app.get_webview_window("hud")?;
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let scale = monitor.as_ref().map(|m| m.scale_factor());
+    let cur = window.outer_position().ok();
+    let (cur_x, cur_y) = match cur {
+        Some(p) => {
+            let s = scale.unwrap_or(1.0);
+            (Some(p.x as f64 / s), Some(p.y as f64 / s))
+        }
+        None => (None, None),
+    };
+
+    let (width, height) = match mode {
+        HudMode::Bar => HUD_BAR,
+        HudMode::Pill => HUD_PILL,
+        HudMode::Panel => HUD_PANEL,
+    };
+    let _ = window.set_size(LogicalSize::new(width, height));
+
+    let Some(m) = monitor else {
+        return None;
+    };
+    let s = scale.unwrap_or(1.0);
+    let mx = m.position().x as f64 / s;
+    let my = m.position().y as f64 / s;
+    let mw = m.size().width as f64 / s;
+    let mh = m.size().height as f64 / s;
+
+    let saved_x = if restore { None } else { cur_x };
+    let saved_y = if restore { None } else { cur_y };
+    let (x, y) = match mode {
+        HudMode::Bar => {
+            let settings = settings::load_from_disk(app);
+            let base = match (settings.hud.x, settings.hud.y) {
+                (Some(x), Some(y)) => (x, y),
+                _ => {
+                    let d = default_position(app, width, 0.0);
+                    (d.x, d.y)
+                }
+            };
+            (saved_x.unwrap_or(base.0), saved_y.unwrap_or(base.1))
+        }
+        HudMode::Pill | HudMode::Panel => {
+            let base_x = saved_x.or(cur_x);
+            let dock_left = match base_x {
+                Some(x) => x + width / 2.0 < mx + mw / 2.0,
+                None => true,
+            };
+            let x = if dock_left { mx } else { mx + mw - width };
+            let top = saved_y.or(cur_y).unwrap_or(my + 20.0);
+            let y = top.clamp(my + 12.0, (my + mh - height - 12.0).max(my + 12.0));
+            (x, y)
+        }
+    };
+    let _ = window.set_position(LogicalPosition::new(x, y));
+    let _ = window.show();
+    if x + width / 2.0 < mx + mw / 2.0 {
+        Some("left")
+    } else {
+        Some("right")
+    }
+}
+
+#[tauri::command]
+fn set_hud_mode(app: AppHandle, mode: String) -> Option<&'static str> {
+    let mode = match mode.as_str() {
+        "pill" => HudMode::Pill,
+        "panel" => HudMode::Panel,
+        _ => HudMode::Bar,
+    };
+    apply_hud(&app, mode, false)
+}
+
+/// Enable (or disable) the near-cursor wake watch for the hidden HUD.
+#[tauri::command]
+fn set_hud_cursor_watch(app: AppHandle, watch: bool) {
+    HUD_WATCH.store(watch, Ordering::SeqCst);
+    if !watch || HUD_WATCH_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        while HUD_WATCH.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(160));
+            let Some(window) = app.get_webview_window("hud") else {
+                break;
+            };
+            if !window.is_visible().unwrap_or(false) {
+                break;
+            }
+            let (Ok(cursor), Ok(pos), Ok(size)) = (
+                app.cursor_position(),
+                window.outer_position(),
+                window.outer_size(),
+            ) else {
+                continue;
+            };
+            let pad = 26.0;
+            let near = (cursor.x as f64) >= pos.x as f64 - pad
+                && (cursor.x as f64) <= pos.x as f64 + size.width as f64 + pad
+                && (cursor.y as f64) >= pos.y as f64 - pad
+                && (cursor.y as f64) <= pos.y as f64 + size.height as f64 + pad;
+            if near {
+                let _ = app.emit("hud-wake", ());
+                break;
+            }
+        }
+        HUD_WATCH_RUNNING.store(false, Ordering::SeqCst);
+    });
 }
 
 /// Make sure a restored position actually lands on a connected monitor;
@@ -138,16 +304,22 @@ pub fn apply_windows(app: &AppHandle, s: &HandySettings) {
         s.notes_widget.height,
         s.notes_widget.always_on_top,
     );
-    apply_widget(
-        app,
-        "hud",
-        s.hud.enabled,
-        s.hud.x,
-        s.hud.y,
-        292.0,
-        66.0,
-        s.hud.always_on_top,
-    );
+    if !s.hud.enabled {
+        HUD_WATCH.store(false, Ordering::SeqCst);
+        if let Some(window) = app.get_webview_window("hud") {
+            let _ = window.hide();
+        }
+        return;
+    }
+    let mode = if s.hud.snap_to_edge {
+        HudMode::Pill
+    } else {
+        HudMode::Bar
+    };
+    if let Some(window) = app.get_webview_window("hud") {
+        let _ = window.set_always_on_top(s.hud.always_on_top);
+    }
+    apply_hud(app, mode, true);
 }
 
 // --- geometry persistence -------------------------------------------------
@@ -207,8 +379,32 @@ fn persist_geometry(app: &AppHandle, label: &str) {
             s.notes_widget.height = height;
         }
         "hud" => {
-            s.hud.x = x;
-            s.hud.y = y;
+            // In pill mode the HUD snaps back to the screen edge once the
+            // drag settles; remember the docked position, not the drop spot.
+            let dock = settings::load_from_disk(app).hud.snap_to_edge;
+            if dock {
+                if let (Ok(scale), Ok(monitor)) = (window.scale_factor(), window.current_monitor())
+                {
+                    if let Some(m) = monitor {
+                        let mx = m.position().x as f64 / scale;
+                        let mw = m.size().width as f64 / scale;
+                        let width = size.width as f64 / scale;
+                        let dock_left = pos.x as f64 / scale + width / 2.0 < mx + mw / 2.0;
+                        let x = if dock_left { mx } else { mx + mw - width };
+                        let _ = window.set_position(LogicalPosition::new(
+                            x,
+                            pos.y as f64 / scale,
+                        ));
+                        if let Ok(pos) = window.outer_position() {
+                            s.hud.x = Some(pos.x as f64 / scale);
+                            s.hud.y = Some(pos.y as f64 / scale);
+                        }
+                    }
+                }
+            } else {
+                s.hud.x = x;
+                s.hud.y = y;
+            }
         }
         _ => return,
     }
@@ -353,9 +549,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             read_acta_data,
+            write_todo_check,
+            write_note,
             refresh_data,
             show_window,
             quit_app,
+            set_hud_mode,
+            set_hud_cursor_watch,
             settings::load_settings,
             settings::save_settings
         ])

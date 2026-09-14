@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted } from "vue";
-import { initStore, refreshActaData, store } from "../lib/store";
+import { checkTask, checkTodo, initStore, refreshActaData, store } from "../lib/store";
 import { bucketTodos, folderMap } from "../lib/view";
 import { longDate } from "../lib/format";
 import { t } from "../lib/i18n";
@@ -70,10 +70,24 @@ async function reload(): Promise<void> {
 
       <template v-if="state === 'list'">
         <ul class="widget-list">
-          <TodoRow v-for="todo in shown" :key="todo.id" :todo="todo" :folder="folders.get(todo.folderId)" />
+          <TodoRow
+            v-for="todo in shown"
+            :key="todo.id"
+            :todo="todo"
+            :folder="folders.get(todo.folderId)"
+            @check="(completed) => checkTodo(todo.id, completed)"
+            @check-task="(taskId) => checkTask(todo.id, taskId)"
+          />
           <template v-if="buckets.upcoming.length > 0">
             <li class="widget-section-label section-label">{{ t("upcoming") }}</li>
-            <TodoRow v-for="todo in buckets.upcoming.slice(0, 3)" :key="todo.id" :todo="todo" :folder="folders.get(todo.folderId)" />
+            <TodoRow
+              v-for="todo in buckets.upcoming.slice(0, 3)"
+              :key="todo.id"
+              :todo="todo"
+              :folder="folders.get(todo.folderId)"
+              @check="(completed) => checkTodo(todo.id, completed)"
+              @check-task="(taskId) => checkTask(todo.id, taskId)"
+            />
           </template>
         </ul>
       </template>
@@ -106,8 +120,8 @@ async function reload(): Promise<void> {
       </div>
 
       <footer class="widget-foot">
-        <AppIcon name="info" :size="11" />
-        <span data-tauri-drag-region>{{ t("readonlyHint") }}</span>
+        <AppIcon name="check" :size="11" />
+        <span data-tauri-drag-region>{{ t("autosaveHint") }}</span>
       </footer>
     </div>
   </div>

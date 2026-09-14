@@ -90,7 +90,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   height: 100%;
   background: var(--sage);
   border-radius: inherit;
-  transition: width .7s var(--ease-out);
+  transition: width .5s var(--ease-out);
 }
 
 .folder-dot {
@@ -144,10 +144,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   cursor: pointer;
   font-size: 12px;
   font-weight: 650;
-  transition: background .15s ease, transform .18s var(--ease-out), box-shadow .18s ease;
+  transition: background .15s ease, transform .1s ease-out, box-shadow .18s ease;
 }
-.settings-button:hover { transform: scale(1.03); background: #30362f; box-shadow: 0 5px 12px -4px rgba(35, 40, 34, .14); }
-.settings-button:active { transform: scale(.97); transition-duration: .08s; }
+.settings-button:hover { background: #30362f; }
+.settings-button:active { transform: scale(.97); transition-duration: .06s; }
 html[data-handy-theme="dark"] .settings-button:hover { background: #d6d6d6; color: var(--sidebar); }
 .settings-button.secondary {
   border: 1px solid var(--line);

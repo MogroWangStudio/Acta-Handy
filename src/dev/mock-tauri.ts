@@ -20,7 +20,7 @@ function mockSettings(): HandySettings {
     refreshIntervalSecs: 30,
     todoWidget: { enabled: true, x: null, y: null, width: 300, height: 360, opacity: 1, alwaysOnTop: false, showCompleted: true },
     notesWidget: { enabled: false, x: null, y: null, width: 300, height: 380, opacity: 1, alwaysOnTop: false, showCompleted: false },
-    hud: { enabled: false, x: null, y: null, opacity: 1, alwaysOnTop: true },
+    hud: { enabled: false, x: null, y: null, opacity: 1, alwaysOnTop: true, snapToEdge: false, stealth: false, stealthDelaySecs: 15 },
   };
 }
 
@@ -144,15 +144,52 @@ const settings = mockSettings();
 function invoke(cmd: string, args: Record<string, unknown>): unknown {
   switch (cmd) {
     case "load_settings":
-      return settings;
+      // 真实 Tauri 每次返回新 JSON 对象；mock 保持一致，避免 Vue 响应式引用相等而不触发。
+      return JSON.parse(JSON.stringify(settings));
     case "save_settings":
       Object.assign(settings, args.settings);
-      fire("settings-changed", settings);
-      return settings;
+      fire("settings-changed", JSON.parse(JSON.stringify(settings)));
+      return JSON.parse(JSON.stringify(settings));
     case "read_acta_data":
       return Promise.resolve(data);
+    case "write_todo_check": {
+      const patch = args.patch as { todoId: string; completed: boolean; tasks: Array<{ id: string; done: boolean }> };
+      const todo = data.todos.find((t) => t.id === patch.todoId);
+      if (!todo) return Promise.reject("未找到待办");
+      todo.completed = patch.completed;
+      for (const task of todo.tasks) {
+        const check = patch.tasks.find((c) => c.id === task.id);
+        if (check) task.done = check.done;
+      }
+      todo.updatedAt = new Date().toISOString();
+      return Promise.resolve(JSON.parse(JSON.stringify(todo)));
+    }
+    case "write_note": {
+      const patch = args.patch as { noteId?: string | null; title?: string | null; bodyMarkdown?: string | null };
+      if (!patch.noteId) {
+        const note = {
+          id: `mock-${Date.now().toString(36)}`,
+          title: patch.title ?? "",
+          folderId: "",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          bodyMarkdown: patch.bodyMarkdown ?? "",
+        };
+        data.notes.unshift(note);
+        return Promise.resolve(note);
+      }
+      const note = data.notes.find((n) => n.id === patch.noteId);
+      if (!note) return Promise.reject("未找到笔记");
+      if (patch.title !== null && patch.title !== undefined) note.title = patch.title;
+      if (patch.bodyMarkdown !== null && patch.bodyMarkdown !== undefined) note.bodyMarkdown = patch.bodyMarkdown;
+      note.updatedAt = new Date().toISOString();
+      return Promise.resolve(JSON.parse(JSON.stringify(note)));
+    }
+    case "set_hud_mode":
+      return Promise.resolve(args.mode === "bar" ? null : "right");
+    case "set_hud_cursor_watch":
     case "refresh_data":
-      fire("acta-data-changed", null);
+      if (cmd === "refresh_data") fire("acta-data-changed", null);
       return null;
     case "show_window":
     case "quit_app":
