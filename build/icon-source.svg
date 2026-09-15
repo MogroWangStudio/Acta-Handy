@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!-- Acta Handy app icon: white rounded-rect tile, graphic mark centered.
+     The mark fills ~80% of the tile height (icon-design norm: the glyph, not
+     the padding, should dominate at taskbar sizes) — previously it filled only
+     ~54%, which read as a soft blob at 24–32 px.
      Rendered to PNG at 1024px, then resized for icns/ico/png sets. -->
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
     <rect width="1024" height="1024" rx="224" ry="224" fill="#ffffff"/>
-    <g transform="translate(359.5,235.5) scale(3.3516)" fill="#242823">
+    <g transform="translate(291.4,112) scale(4.8485)" fill="#242823">
         <g transform="matrix(1,0,0,1,-1276.006701,-456.386861)">
             <g transform="matrix(1,0,0,1,803.146283,-300.530453)">
                 <g transform="matrix(1.410031,0,0,1.410031,-312.48265,373.365759)">

@@ -20,9 +20,9 @@ export interface HudConfig {
   y: number | null;
   opacity: number;
   alwaysOnTop: boolean;
-  /** 药丸模式：吸附到最近的屏幕边缘，鼠标移过时展开快速编辑面板。 */
+  /** 探头模式：吸附到最近的屏幕边缘，光标靠近时展开快速编辑面板。 */
   snapToEdge: boolean;
-  /** 隐匿模式：超过设定延迟后淡出，鼠标靠近时再淡入。 */
+  /** 隐匿模式：超过设定延迟后淡出，光标靠近时再唤醒。 */
   stealth: boolean;
   stealthDelaySecs: number;
 }

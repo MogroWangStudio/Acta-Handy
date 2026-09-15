@@ -51,14 +51,15 @@ export function quitApp(): Promise<void> {
   return invoke("quit_app");
 }
 
-/** 切换悬浮窗形态；返回药丸贴在哪一侧（"left" / "right"），信息条为 null。 */
-export function setHudMode(mode: "bar" | "pill" | "panel"): Promise<"left" | "right" | null> {
+/** 切换悬浮窗形态；返回贴在哪一侧（"left" / "right"），自由形态为 null。 */
+export function setHudMode(mode: "free" | "peek" | "panel"): Promise<"left" | "right" | null> {
   return invoke<"left" | "right" | null>("set_hud_mode", { mode });
 }
 
-/** 隐匿淡出后开启光标监控；鼠标靠近窗口时后端会广播 hud-wake。 */
-export function setHudCursorWatch(watch: boolean): Promise<void> {
-  return invoke("set_hud_cursor_watch", { watch });
+/** 隐匿淡出后开启光标监控；鼠标靠近窗口 pad 像素内时后端会广播 hud-wake。
+    探头形态用更大的 pad，让 Handy 在光标靠近时就主动跳出。 */
+export function setHudCursorWatch(watch: boolean, pad = 26): Promise<void> {
+  return invoke("set_hud_cursor_watch", { watch, pad });
 }
 
 export function pickDataFolder(): Promise<string | null> {

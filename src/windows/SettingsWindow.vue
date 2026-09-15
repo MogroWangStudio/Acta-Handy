@@ -11,7 +11,7 @@ import LogoWordmark from "../components/LogoWordmark.vue";
 import SelectMenu from "../components/SelectMenu.vue";
 import type { IconName } from "../types/icons";
 
-const APP_VERSION = "0.3.0";
+const APP_VERSION = "0.4.0";
 
 type SectionId = "data" | "todoWidget" | "notesWidget" | "hud" | "general" | "about";
 const active = ref<SectionId>("data");
@@ -123,11 +123,19 @@ onBeforeUnmount(() => {
       <span class="brand"><LogoWordmark :height="28" /></span>
       <span v-if="platform === 'darwin'" class="spacer" />
       <div v-else class="window-controls">
-        <button title="最小化" @click="minimize"><span class="glyph minimize" /></button>
-        <button :title="maximized ? '还原' : '最大化'" @click="toggleMaximize">
-          <span class="glyph" :class="maximized ? 'restore' : 'maximize'" />
+        <button title="最小化" @click="minimize">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 6h6.8" /></svg>
         </button>
-        <button title="关闭" class="close" @click="closeWindow"><span class="glyph close" /></button>
+        <button :title="maximized ? '还原' : '最大化'" @click="toggleMaximize">
+          <svg v-if="!maximized" viewBox="0 0 12 12" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.3" /></svg>
+          <svg v-else viewBox="0 0 12 12" aria-hidden="true">
+            <rect x="2.6" y="4.4" width="5" height="5" rx="1.2" />
+            <path d="M4.6 2.6h2.9a1.9 1.9 0 0 1 1.9 1.9v2.9" />
+          </svg>
+        </button>
+        <button title="关闭" class="close" @click="closeWindow">
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.2 3.2l5.6 5.6M8.8 3.2l-5.6 5.6" /></svg>
+        </button>
       </div>
     </div>
 
@@ -348,40 +356,19 @@ onBeforeUnmount(() => {
   transition: background .15s ease, color .15s ease;
 }
 .window-controls button:hover { background: rgba(42, 48, 41, .09); }
+.window-controls button:active { background: rgba(42, 48, 41, .16); transition-duration: .05s; }
 .window-controls button.close:hover { background: #c42b1c; color: #fff; }
-/* 10px 见方的控件字形：横线、方框、还原双框、关闭 ×。 */
-.window-controls .glyph {
-  position: relative;
-  display: block;
-  width: 10px;
-  height: 10px;
+.window-controls button.close:active { background: #b02517; color: #fff; }
+/* 控件字形与 AppIcon 同一线条语言：12 见方、1px 圆头描边。 */
+.window-controls svg {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-.window-controls .glyph.minimize { height: 1px; background: currentColor; }
-.window-controls .glyph.maximize { border: 1px solid currentColor; }
-.window-controls .glyph.restore { border: 1px solid currentColor; background: var(--sidebar); }
-.window-controls .glyph.restore::before {
-  content: "";
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  width: 8px;
-  height: 8px;
-  border: 1px solid currentColor;
-  border-bottom: 0;
-  border-left: 0;
-}
-.window-controls .glyph.close::before,
-.window-controls .glyph.close::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 0;
-  width: 10px;
-  height: 1px;
-  background: currentColor;
-}
-.window-controls .glyph.close::before { transform: rotate(45deg); }
-.window-controls .glyph.close::after { transform: rotate(-45deg); }
 
 /* --- layout --- */
 .layout {

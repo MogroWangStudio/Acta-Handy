@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Acta Handy",
-  "version": "0.3.0",
-  "identifier": "com.mogrowangstudio.actahandy",
+  "version": "0.4.0",
+  "identifier": "com.mws.actahandy",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
@@ -56,9 +56,9 @@
       },
       {
         "label": "hud",
-        "title": "Acta Handy · 悬浮窗",
-        "width": 292,
-        "height": 66,
+        "title": "Acta Handy · Handy",
+        "width": 92,
+        "height": 136,
         "visible": false,
         "decorations": false,
         "transparent": true,

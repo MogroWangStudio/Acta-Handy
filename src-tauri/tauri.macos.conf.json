@@ -50,9 +50,9 @@
       },
       {
         "label": "hud",
-        "title": "Acta Handy · 悬浮窗",
-        "width": 292,
-        "height": 66,
+        "title": "Acta Handy · Handy",
+        "width": 92,
+        "height": 136,
         "visible": false,
         "decorations": false,
         "transparent": true,

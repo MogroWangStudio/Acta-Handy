@@ -1,4 +1,5 @@
-//! Handy's own settings, stored as JSON in the OS app-config directory.
+//! Handy's own settings. On Windows they live next to the portable exe (no
+//! %APPDATA%); elsewhere they use the OS app-config directory.
 
 use std::fs;
 use std::path::PathBuf;
@@ -127,21 +128,52 @@ impl HandySettings {
 }
 
 fn settings_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|dir| dir.join(SETTINGS_FILE))
+    // Windows 便携版：设置与 exe 同目录，换机器拷走整个文件夹即可带走全部数据。
+    if cfg!(windows) {
+        if let Ok(dir) = app.path().executable_dir() {
+            if !dir.as_os_str().is_empty() {
+                return Some(dir.join(SETTINGS_FILE));
+            }
+        }
+    }
+    app.path().app_config_dir().ok().map(|dir| dir.join(SETTINGS_FILE))
+}
+
+/// 0.3 及更早版本在 Windows 上把设置存在 %APPDATA%\<identifier> 下；首次启动
+/// 时从这里读出旧数据，之后的保存会自然落在新位置，完成迁移。
+fn legacy_settings_paths(app: &AppHandle) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if cfg!(windows) {
+        if let Ok(dir) = app.path().app_config_dir() {
+            paths.push(dir.join(SETTINGS_FILE));
+        }
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            paths.push(
+                PathBuf::from(appdata)
+                    .join("com.mogrowangstudio.actahandy")
+                    .join(SETTINGS_FILE),
+            );
+        }
+    }
+    paths
 }
 
 pub fn load_from_disk(app: &AppHandle) -> HandySettings {
-    let Some(path) = settings_path(app) else {
-        return HandySettings::default();
-    };
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|raw| serde_json::from_str::<HandySettings>(&raw).ok())
-        .map(|s| s.sanitized())
-        .unwrap_or_default()
+    if let Some(path) = settings_path(app) {
+        if let Ok(raw) = fs::read_to_string(&path) {
+            if let Some(s) = serde_json::from_str::<HandySettings>(&raw).ok() {
+                return s.sanitized();
+            }
+        }
+    }
+    for path in legacy_settings_paths(app) {
+        if let Ok(raw) = fs::read_to_string(&path) {
+            if let Some(s) = serde_json::from_str::<HandySettings>(&raw).ok() {
+                return s.sanitized();
+            }
+        }
+    }
+    HandySettings::default()
 }
 
 pub fn save_to_disk(app: &AppHandle, settings: &HandySettings) -> Result<(), String> {

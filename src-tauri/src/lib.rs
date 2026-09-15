@@ -4,7 +4,7 @@ mod acta;
 mod settings;
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -17,18 +17,19 @@ use settings::HandySettings;
 const TRAY_ID: &str = "acta-handy-tray";
 const WIDGET_LABELS: [&str; 3] = ["todo-widget", "notes-widget", "hud"];
 
-/// HUD shapes. `Bar` is the classic floating strip; `Pill` is the docked
-/// capsule; `Panel` is the expanded quick-edit panel.
+/// HUD shapes. `Free` is Handy standing on the desktop; `Peek` is the
+/// edge-clinging pose (part of the body clipped beyond the screen edge);
+/// `Panel` is the expanded quick-edit panel with Handy beside it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HudMode {
-    Bar,
-    Pill,
+    Free,
+    Peek,
     Panel,
 }
 
-const HUD_BAR: (f64, f64) = (292.0, 66.0);
-const HUD_PILL: (f64, f64) = (56.0, 68.0);
-const HUD_PANEL: (f64, f64) = (324.0, 460.0);
+const HUD_FREE: (f64, f64) = (92.0, 136.0);
+const HUD_PEEK: (f64, f64) = (50.0, 146.0);
+const HUD_PANEL: (f64, f64) = (372.0, 470.0);
 
 /// While true, a watcher thread polls the cursor and wakes the HUD when the
 /// pointer comes near (stealth mode keeps the window invisible otherwise).
@@ -89,10 +90,10 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
-/// Resize/position the HUD for a shape. Returns which screen edge the pill is
-/// docked to ("left"/"right"), or None for the free-floating bar.
+/// Resize/position the HUD for a shape. Returns which screen edge the window
+/// is docked to ("left"/"right"), or None for the free-standing shape.
 /// With `restore`, the saved settings position wins (app startup / settings
-/// change); otherwise the window keeps its live position (pill ↔ panel).
+/// change); otherwise the window keeps its live position (peek ↔ panel).
 fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<&'static str> {
     let window = app.get_webview_window("hud")?;
     let monitor = window
@@ -111,8 +112,8 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<&'static s
     };
 
     let (width, height) = match mode {
-        HudMode::Bar => HUD_BAR,
-        HudMode::Pill => HUD_PILL,
+        HudMode::Free => HUD_FREE,
+        HudMode::Peek => HUD_PEEK,
         HudMode::Panel => HUD_PANEL,
     };
     let _ = window.set_size(LogicalSize::new(width, height));
@@ -129,7 +130,7 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<&'static s
     let saved_x = if restore { None } else { cur_x };
     let saved_y = if restore { None } else { cur_y };
     let (x, y) = match mode {
-        HudMode::Bar => {
+        HudMode::Free => {
             let settings = settings::load_from_disk(app);
             let base = match (settings.hud.x, settings.hud.y) {
                 (Some(x), Some(y)) => (x, y),
@@ -140,7 +141,7 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<&'static s
             };
             (saved_x.unwrap_or(base.0), saved_y.unwrap_or(base.1))
         }
-        HudMode::Pill | HudMode::Panel => {
+        HudMode::Peek | HudMode::Panel => {
             let base_x = saved_x.or(cur_x);
             let dock_left = match base_x {
                 Some(x) => x + width / 2.0 < mx + mw / 2.0,
@@ -164,21 +165,31 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<&'static s
 #[tauri::command]
 fn set_hud_mode(app: AppHandle, mode: String) -> Option<&'static str> {
     let mode = match mode.as_str() {
-        "pill" => HudMode::Pill,
+        "peek" => HudMode::Peek,
         "panel" => HudMode::Panel,
-        _ => HudMode::Bar,
+        _ => HudMode::Free,
     };
     apply_hud(&app, mode, false)
 }
 
-/// Enable (or disable) the near-cursor wake watch for the hidden HUD.
+/// Enable (or disable) the near-cursor watch. While active, a thread polls the
+/// cursor and emits `hud-wake` once it comes within `pad` logical px of the
+/// window — stealth mode uses a small pad to revive the hidden HUD, and the
+/// peeking Handy uses a large one to jump out as the pointer approaches.
+static HUD_WATCH_PAD: AtomicU32 = AtomicU32::new(26);
+
 #[tauri::command]
-fn set_hud_cursor_watch(app: AppHandle, watch: bool) {
+fn set_hud_cursor_watch(app: AppHandle, watch: bool, pad: Option<f64>) {
+    HUD_WATCH_PAD.store(pad.unwrap_or(26.0).round().clamp(8.0, 200.0) as u32, Ordering::SeqCst);
     HUD_WATCH.store(watch, Ordering::SeqCst);
     if !watch || HUD_WATCH_RUNNING.swap(true, Ordering::SeqCst) {
         return;
     }
     std::thread::spawn(move || {
+        // 只在「由远及近」的上升沿发射一次事件：面板收起后光标若仍停在
+        // 附近，不会立刻再次触发造成弹跳，需要先离开再靠近。启动时视为
+        // 「已在附近」，光标原地不动就不会触发。
+        let mut was_near = true;
         while HUD_WATCH.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(160));
             let Some(window) = app.get_webview_window("hud") else {
@@ -194,15 +205,16 @@ fn set_hud_cursor_watch(app: AppHandle, watch: bool) {
             ) else {
                 continue;
             };
-            let pad = 26.0;
+            let scale = window.scale_factor().unwrap_or(1.0);
+            let pad = HUD_WATCH_PAD.load(Ordering::SeqCst) as f64 * scale;
             let near = (cursor.x as f64) >= pos.x as f64 - pad
                 && (cursor.x as f64) <= pos.x as f64 + size.width as f64 + pad
                 && (cursor.y as f64) >= pos.y as f64 - pad
                 && (cursor.y as f64) <= pos.y as f64 + size.height as f64 + pad;
-            if near {
+            if near && !was_near {
                 let _ = app.emit("hud-wake", ());
-                break;
             }
+            was_near = near;
         }
         HUD_WATCH_RUNNING.store(false, Ordering::SeqCst);
     });
@@ -312,9 +324,9 @@ pub fn apply_windows(app: &AppHandle, s: &HandySettings) {
         return;
     }
     let mode = if s.hud.snap_to_edge {
-        HudMode::Pill
+        HudMode::Peek
     } else {
-        HudMode::Bar
+        HudMode::Free
     };
     if let Some(window) = app.get_webview_window("hud") {
         let _ = window.set_always_on_top(s.hud.always_on_top);
@@ -447,7 +459,7 @@ fn tray_labels(zh: bool) -> (&'static str, &'static str, &'static str, &'static 
             "打开 Acta Handy 设置",
             "待办小组件",
             "笔记小组件",
-            "悬浮窗",
+            "Handy 小人",
             "退出 Acta Handy",
         )
     } else {
@@ -455,7 +467,7 @@ fn tray_labels(zh: bool) -> (&'static str, &'static str, &'static str, &'static 
             "Open Acta Handy Settings",
             "Todo Widget",
             "Notes Widget",
-            "Floating HUD",
+            "Handy mascot",
             "Quit Acta Handy",
         )
     }
