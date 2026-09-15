@@ -5,13 +5,13 @@ import { countsFor } from "../lib/view";
 import { shortDate } from "../lib/format";
 import { t } from "../lib/i18n";
 import { initStore, persistSettings, refreshActaData, store } from "../lib/store";
-import { pickDataFolder, refreshData, showWindow } from "../lib/api";
+import { onHudAnim, pickDataFolder, refreshData, showWindow } from "../lib/api";
 import AppIcon from "../components/AppIcon.vue";
 import LogoWordmark from "../components/LogoWordmark.vue";
 import SelectMenu from "../components/SelectMenu.vue";
 import type { IconName } from "../types/icons";
 
-const APP_VERSION = "0.4.0";
+const APP_VERSION = "0.5.0";
 
 type SectionId = "data" | "todoWidget" | "notesWidget" | "hud" | "general" | "about";
 const active = ref<SectionId>("data");
@@ -68,6 +68,16 @@ const THEME_OPTIONS = computed(() => [
   { value: "dark", label: t("themeDark") },
 ]);
 
+const HUD_SIZES = [
+  { value: 0.8, label: () => t("hudSizeSmall") },
+  { value: 1, label: () => t("hudSizeMedium") },
+  { value: 1.25, label: () => t("hudSizeLarge") },
+];
+const hudSizeOptions = computed(() => HUD_SIZES.map((o) => ({ value: o.value, label: o.label() })));
+
+/** 贴边过渡动画播放中：Handy 相关设置暂时不可操作。 */
+const hudBusy = ref(false);
+
 const LANGUAGE_OPTIONS = [
   { value: "zh", label: "简体中文" },
   { value: "en", label: "English" },
@@ -107,6 +117,9 @@ onMounted(async () => {
   maximized.value = await win.isMaximized().catch(() => false);
   unlistenResized = await win.onResized(async () => {
     maximized.value = await win.isMaximized().catch(() => false);
+  });
+  void onHudAnim((payload) => {
+    hudBusy.value = payload.phase !== "end";
   });
   await initStore();
   await new Promise((r) => setTimeout(r, 60));
@@ -250,12 +263,16 @@ onBeforeUnmount(() => {
         <section v-else-if="active === 'hud'" class="panel">
           <header>
             <h3>{{ t("navHud") }}</h3>
-            <p>{{ t("widgetHint") }}</p>
+            <p>{{ t("hudHint") }}</p>
           </header>
-          <div class="group">
+          <div class="group" :class="{ busy: hudBusy }">
             <div class="row">
               <span class="row-copy"><b>{{ t("enableWidget") }}</b><small>{{ t("hudEnableDesc") }}</small></span>
               <button class="switch" role="switch" :aria-checked="store.settings.hud.enabled" @click="store.settings.hud.enabled = !store.settings.hud.enabled; save()" />
+            </div>
+            <div class="row">
+              <span class="row-copy"><b>{{ t("hudSize") }}</b><small>{{ t("hudSizeDesc") }}</small></span>
+              <SelectMenu v-model="store.settings.hud.scale" :options="hudSizeOptions" @update:model-value="save" />
             </div>
             <div class="row">
               <span class="row-copy"><b>{{ t("opacity") }}</b><small>{{ t("opacityDesc") }}</small></span>
@@ -306,9 +323,6 @@ onBeforeUnmount(() => {
           <div class="group">
             <div class="row">
               <span class="row-copy"><b>{{ t("aboutTitle") }}</b><small>{{ t("aboutDesc") }}</small></span>
-            </div>
-            <div class="row">
-              <span class="row-copy"><b>{{ t("aboutWrite") }}</b><small>{{ t("aboutWriteDesc") }}</small></span>
             </div>
           </div>
           <div class="meta-grid">
@@ -418,7 +432,10 @@ onBeforeUnmount(() => {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: color-mix(in srgb, var(--white) 40%, transparent);
+  transition: opacity .2s ease;
 }
+/* 贴边过渡动画播放期间，Handy 的设置暂时不可操作。 */
+.group.busy { pointer-events: none; opacity: .55; }
 .row {
   min-height: 58px;
   padding: 12px 15px;

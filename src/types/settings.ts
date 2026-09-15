@@ -20,6 +20,8 @@ export interface HudConfig {
   y: number | null;
   opacity: number;
   alwaysOnTop: boolean;
+  /** Handy 缩放档位：0.8 / 1 / 1.25（右键菜单与设置窗口共用）。 */
+  scale: number;
   /** 探头模式：吸附到最近的屏幕边缘，光标靠近时展开快速编辑面板。 */
   snapToEdge: boolean;
   /** 隐匿模式：超过设定延迟后淡出，光标靠近时再唤醒。 */
@@ -70,6 +72,7 @@ export const DEFAULT_SETTINGS: HandySettings = {
     y: null,
     opacity: 1,
     alwaysOnTop: true,
+    scale: 1,
     snapToEdge: false,
     stealth: false,
     stealthDelaySecs: 15,

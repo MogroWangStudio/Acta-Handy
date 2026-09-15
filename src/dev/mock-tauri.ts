@@ -22,7 +22,7 @@ function mockSettings(): HandySettings {
     refreshIntervalSecs: 30,
     todoWidget: { enabled: true, x: null, y: null, width: 300, height: 360, opacity: 1, alwaysOnTop: false, showCompleted: true },
     notesWidget: { enabled: false, x: null, y: null, width: 300, height: 380, opacity: 1, alwaysOnTop: false, showCompleted: false },
-    hud: { enabled: true, x: null, y: null, opacity: 1, alwaysOnTop: true, snapToEdge: snap, stealth: false, stealthDelaySecs: 15 },
+    hud: { enabled: true, x: null, y: null, opacity: 1, alwaysOnTop: true, scale: 1, snapToEdge: snap, stealth: false, stealthDelaySecs: 15 },
   };
 }
 
@@ -188,7 +188,9 @@ function invoke(cmd: string, args: Record<string, unknown>): unknown {
       return Promise.resolve(JSON.parse(JSON.stringify(note)));
     }
     case "set_hud_mode":
-      return Promise.resolve(args.mode === "free" ? null : "right");
+      return Promise.resolve(args.mode === "free" ? null : { side: "right", lift: 5 });
+    case "popup_hud_menu":
+      return null;
     case "set_hud_cursor_watch":
     case "refresh_data":
       if (cmd === "refresh_data") fire("acta-data-changed", null);

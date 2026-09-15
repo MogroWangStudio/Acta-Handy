@@ -51,9 +51,22 @@ export function quitApp(): Promise<void> {
   return invoke("quit_app");
 }
 
-/** 切换悬浮窗形态；返回贴在哪一侧（"left" / "right"），自由形态为 null。 */
-export function setHudMode(mode: "free" | "peek" | "panel"): Promise<"left" | "right" | null> {
-  return invoke<"left" | "right" | null>("set_hud_mode", { mode });
+/** Handy 面板停靠信息：side 是 Handy 站在窗口的哪一侧（也是贴边方向），
+    lift 是面板形态下 Handy 脚底离窗口底部的距离（面板向上展开被屏幕
+    上缘截断时变大，Handy 的屏幕位置因此保持不动）。 */
+export interface HudPlacement {
+  side: "left" | "right";
+  lift: number;
+}
+
+/** 切换悬浮窗形态；返回停靠信息，自由形态为 null。 */
+export function setHudMode(mode: "free" | "peek" | "panel"): Promise<HudPlacement | null> {
+  return invoke<HudPlacement | null>("set_hud_mode", { mode });
+}
+
+/** 弹出 Handy 的右键原生菜单（大小 / 关闭）。 */
+export function popupHudMenu(): Promise<void> {
+  return invoke("popup_hud_menu");
 }
 
 /** 隐匿淡出后开启光标监控；鼠标靠近窗口 pad 像素内时后端会广播 hud-wake。
@@ -80,4 +93,14 @@ export function onSettingsChanged(cb: (settings: HandySettings) => void): Promis
 
 export function onHudWake(cb: () => void): Promise<void> {
   return listen("hud-wake", () => cb()).then(() => undefined);
+}
+
+/** 贴边过渡动画进度：start 开始滑行、reveal 切换探头/站姿、end 结束。
+    动画期间后端会挡下设置应用，前端也应暂停形态交互。 */
+export function onHudAnim(
+  cb: (payload: { phase: "start" | "reveal" | "end"; to?: "peek" | "free" }) => void,
+): Promise<void> {
+  return listen<{ phase: "start" | "reveal" | "end"; to?: "peek" | "free" }>("hud-anim", (e) =>
+    cb(e.payload),
+  ).then(() => undefined);
 }

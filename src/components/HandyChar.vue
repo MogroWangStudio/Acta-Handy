@@ -1,14 +1,13 @@
 <script setup lang="ts">
 // Handy（汉迪）：桌面小人，形体直接复用 Acta Handy 的图形 logo（91×165），
-// viewBox 向下扩到 176 放一枚落地阴影。眼睛（两枚浅色圆点）循环眨眼，
-// 身体带极轻微的呼吸起伏；拖动时的摇晃由父级加 .handy-shake 驱动。
+// viewBox 向下收脚底为止。眼睛（两枚浅色圆点）循环眨眼，身体带极轻微的
+// 呼吸起伏；拖动时的摇晃由父级加 .handy-shake 驱动。
 defineProps<{ width?: number }>();
 </script>
 
 <template>
   <div class="handy">
-    <svg :width="width ?? 64" viewBox="0 0 91 176" fill="currentColor" aria-hidden="true">
-      <ellipse class="handy-ground" cx="45.5" cy="170.5" rx="31" ry="4.5" />
+    <svg :width="width ?? 64" viewBox="0 0 91 166" fill="currentColor" aria-hidden="true">
       <g class="handy-figure">
         <g transform="matrix(1,0,0,1,-472.860418,-756.917314)">
           <g transform="matrix(1.410031,0,0,1.410031,-312.48265,373.365759)">
@@ -49,13 +48,10 @@ defineProps<{ width?: number }>();
 .handy-figure {
   animation: handy-breathe 3.6s ease-in-out infinite;
   transform-box: view-box;
-  transform-origin: 50% 93.75%;
+  transform-origin: 50% 99%;
 }
 @keyframes handy-breathe {
   0%, 100% { transform: scaleY(1); }
   50% { transform: scaleY(1.018); }
 }
-
-.handy-ground { fill: #000; opacity: .14; }
-html[data-handy-theme="dark"] .handy-ground { opacity: .3; }
 </style>
