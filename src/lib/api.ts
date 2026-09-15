@@ -64,9 +64,29 @@ export function setHudMode(mode: "free" | "peek" | "panel"): Promise<HudPlacemen
   return invoke<HudPlacement | null>("set_hud_mode", { mode });
 }
 
-/** 弹出 Handy 的右键原生菜单（大小 / 关闭）。 */
+/** 弹出 Handy 的右键菜单（应用内自绘：大小滑块 + 关闭）。 */
 export function popupHudMenu(): Promise<void> {
   return invoke("popup_hud_menu");
+}
+
+/** 滑块拖动中的实时缩放：窗口尺寸立即跟随，落盘在 commitHudScale 时完成。 */
+export function setHudScale(scale: number): Promise<HudPlacement | null> {
+  return invoke<HudPlacement | null>("set_hud_scale", { scale });
+}
+
+/** 滑块松手：把实时缩放落盘并广播。 */
+export function commitHudScale(): Promise<void> {
+  return invoke("commit_hud_scale");
+}
+
+/** 右键菜单里的「关闭 Handy」；重新开启后以吸附 / 自由形态回来。 */
+export function setHudEnabled(enabled: boolean): Promise<void> {
+  return invoke("set_hud_enabled", { enabled });
+}
+
+/** 开启眼睛跟随：后端线程轮询光标相对 Handy 的方向并广播 hud-gaze。 */
+export function setHudEyeWatch(watch: boolean): Promise<void> {
+  return invoke("set_hud_eye_watch", { watch });
 }
 
 /** 隐匿淡出后开启光标监控；鼠标靠近窗口 pad 像素内时后端会广播 hud-wake。
@@ -95,12 +115,24 @@ export function onHudWake(cb: () => void): Promise<void> {
   return listen("hud-wake", () => cb()).then(() => undefined);
 }
 
-/** 贴边过渡动画进度：start 开始滑行、reveal 切换探头/站姿、end 结束。
-    动画期间后端会挡下设置应用，前端也应暂停形态交互。 */
+/** 贴边过渡动画进度：start 开始滑行（side 为目标贴边方向）、reveal 切换
+    探头/站姿、end 结束。动画期间后端会挡下设置应用，前端也应暂停形态交互。 */
 export function onHudAnim(
-  cb: (payload: { phase: "start" | "reveal" | "end"; to?: "peek" | "free" }) => void,
+  cb: (payload: { phase: "start" | "reveal" | "end"; to?: "peek" | "free"; side?: "left" | "right" }) => void,
 ): Promise<void> {
-  return listen<{ phase: "start" | "reveal" | "end"; to?: "peek" | "free" }>("hud-anim", (e) =>
-    cb(e.payload),
-  ).then(() => undefined);
+  return listen<{
+    phase: "start" | "reveal" | "end";
+    to?: "peek" | "free";
+    side?: "left" | "right";
+  }>("hud-anim", (e) => cb(e.payload)).then(() => undefined);
+}
+
+/** 光标相对 Handy 的方向（-1..1 归一化），驱动眼睛微微跟随。 */
+export function onHudGaze(cb: (gaze: { nx: number; ny: number }) => void): Promise<void> {
+  return listen<{ nx: number; ny: number }>("hud-gaze", (e) => cb(e.payload)).then(() => undefined);
+}
+
+/** 右键 Handy：后端已把窗口切到菜单形态，payload 为停靠信息。 */
+export function onHudMenu(cb: (placement: HudPlacement) => void): Promise<void> {
+  return listen<HudPlacement>("hud-menu", (e) => cb(e.payload)).then(() => undefined);
 }

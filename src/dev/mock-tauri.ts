@@ -20,9 +20,10 @@ function mockSettings(): HandySettings {
     theme: "auto",
     language: "zh",
     refreshIntervalSecs: 30,
-    todoWidget: { enabled: true, x: null, y: null, width: 300, height: 360, opacity: 1, alwaysOnTop: false, showCompleted: true },
-    notesWidget: { enabled: false, x: null, y: null, width: 300, height: 380, opacity: 1, alwaysOnTop: false, showCompleted: false },
-    hud: { enabled: true, x: null, y: null, opacity: 1, alwaysOnTop: true, scale: 1, snapToEdge: snap, stealth: false, stealthDelaySecs: 15 },
+    window: { x: null, y: null, width: 940, height: 640 },
+    todoWidget: { enabled: true, x: null, y: null, width: 300, height: 360, opacity: 1, alwaysOnTop: false, showCompleted: true, snapToEdge: false },
+    notesWidget: { enabled: false, x: null, y: null, width: 300, height: 380, opacity: 1, alwaysOnTop: false, showCompleted: false, snapToEdge: false },
+    hud: { enabled: true, x: null, y: null, alwaysOnTop: true, scale: 1, snapToEdge: snap, stealth: false, stealthDelaySecs: 15 },
   };
 }
 
@@ -190,7 +191,13 @@ function invoke(cmd: string, args: Record<string, unknown>): unknown {
     case "set_hud_mode":
       return Promise.resolve(args.mode === "free" ? null : { side: "right", lift: 5 });
     case "popup_hud_menu":
+      fire("hud-menu", { side: "right", lift: 5 });
       return null;
+    case "set_hud_scale":
+      return Promise.resolve(null);
+    case "commit_hud_scale":
+    case "set_hud_enabled":
+    case "set_hud_eye_watch":
     case "set_hud_cursor_watch":
     case "refresh_data":
       if (cmd === "refresh_data") fire("acta-data-changed", null);
@@ -224,7 +231,7 @@ export function installMock(): void {
       const id = nextCallbackId++;
       callbacks.set(id, cb);
       window.addEventListener("mock-event", ((e: CustomEvent) => {
-        if (e.detail.event === "settings-changed" || e.detail.event === "acta-data-changed") {
+        if (["settings-changed", "acta-data-changed", "hud-menu", "hud-anim", "hud-gaze", "hud-wake"].includes(e.detail.event)) {
           cb({ event: e.detail.event, id, payload: e.detail.payload });
         }
       }) as EventListener);

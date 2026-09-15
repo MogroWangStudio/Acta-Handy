@@ -12,15 +12,16 @@ export interface WidgetConfig {
   opacity: number;
   alwaysOnTop: boolean;
   showCompleted: boolean;
+  /** 吸附屏幕边缘：拖到边缘附近松手后自动贴合对齐。 */
+  snapToEdge: boolean;
 }
 
 export interface HudConfig {
   enabled: boolean;
   x: number | null;
   y: number | null;
-  opacity: number;
   alwaysOnTop: boolean;
-  /** Handy 缩放档位：0.8 / 1 / 1.25（右键菜单与设置窗口共用）。 */
+  /** Handy 缩放：0.2–1.5 无极调整（右键菜单滑块与设置窗口共用）。 */
   scale: number;
   /** 探头模式：吸附到最近的屏幕边缘，光标靠近时展开快速编辑面板。 */
   snapToEdge: boolean;
@@ -29,12 +30,20 @@ export interface HudConfig {
   stealthDelaySecs: number;
 }
 
+export interface MainWindowConfig {
+  x: number | null;
+  y: number | null;
+  width: number;
+  height: number;
+}
+
 export interface HandySettings {
   version: number;
   dataFolder: string;
   theme: ThemeChoice;
   language: LanguageChoice;
   refreshIntervalSecs: number;
+  window: MainWindowConfig;
   todoWidget: WidgetConfig;
   notesWidget: WidgetConfig;
   hud: HudConfig;
@@ -46,6 +55,7 @@ export const DEFAULT_SETTINGS: HandySettings = {
   theme: "auto",
   language: "zh",
   refreshIntervalSecs: 30,
+  window: { x: null, y: null, width: 940, height: 640 },
   todoWidget: {
     enabled: true,
     x: null,
@@ -55,6 +65,7 @@ export const DEFAULT_SETTINGS: HandySettings = {
     opacity: 1,
     alwaysOnTop: false,
     showCompleted: false,
+    snapToEdge: false,
   },
   notesWidget: {
     enabled: false,
@@ -65,12 +76,12 @@ export const DEFAULT_SETTINGS: HandySettings = {
     opacity: 1,
     alwaysOnTop: false,
     showCompleted: false,
+    snapToEdge: false,
   },
   hud: {
     enabled: false,
     x: null,
     y: null,
-    opacity: 1,
     alwaysOnTop: true,
     scale: 1,
     snapToEdge: false,

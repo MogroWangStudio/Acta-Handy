@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import type { ActaFolder, ActaTodo } from "../types/acta";
-import { dueLabel, isTodoDone, taskProgress } from "../lib/format";
+import { dueLabel, folderColor, folderName, isTodoDone, taskProgress } from "../lib/format";
 import { t } from "../lib/i18n";
 import PriorityPill from "./PriorityPill.vue";
 
@@ -43,6 +43,12 @@ const subtasks = computed(() => taskProgress(props.todo));
       </svg>
     </button>
     <span class="todo-main">
+      <i
+        v-if="folder"
+        class="folder-dot todo-folder-dot"
+        :style="{ color: folderColor(folder) }"
+        :title="folderName(folder)"
+      />
       <span class="todo-title">{{ todo.title || t("untitledTodo") }}</span>
       <span v-if="expandable && !expanded" class="todo-sub">{{ t("subtaskOf")(subtasks.done, subtasks.total) }}</span>
     </span>
@@ -110,6 +116,7 @@ html[data-handy-theme="dark"] .todo-row { border-bottom-color: rgba(255, 255, 25
 html[data-handy-theme="dark"] .todo-check.on { color: var(--sidebar); }
 
 .todo-main { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.todo-folder-dot { width: 6px; height: 6px; align-self: center; }
 .todo-title {
   overflow: hidden;
   white-space: nowrap;

@@ -6,6 +6,7 @@ import { folderColor, folderName, markdownToPlain, shortDate } from "../lib/form
 import { t } from "../lib/i18n";
 import { showWindow } from "../lib/api";
 import AppIcon from "../components/AppIcon.vue";
+import FilterChips from "../components/FilterChips.vue";
 import LogoMark from "../components/LogoMark.vue";
 import NoteEditor from "../components/NoteEditor.vue";
 
@@ -17,6 +18,21 @@ const snippets = computed(
   () => new Map(notes.value.map((note) => [note.id, markdownToPlain(note.bodyMarkdown)])),
 );
 const folders = computed(() => folderMap(store.data));
+
+// 归类筛选：null = 全部；"" = 未归类；否则为文件夹 id。
+const filter = ref<string | null>(null);
+const folderList = computed(() => store.data?.folders ?? []);
+const unfiledCount = computed(
+  () => notes.value.filter((note) => !folders.value.has(note.folderId)).length,
+);
+const hasChips = computed(() => folderList.value.length > 0 || unfiledCount.value > 0);
+const shownNotes = computed(() =>
+  filter.value === null
+    ? notes.value
+    : notes.value.filter(
+        (note) => (folders.value.has(note.folderId) ? note.folderId : "") === filter.value,
+      ),
+);
 
 /** 正在编辑的笔记；null 时显示列表。用 id + 数据里的对象，刷新后仍指向新对象。 */
 const editingId = ref<string | null>(null);
@@ -57,10 +73,17 @@ async function openSettings(): Promise<void> {
         </button>
       </header>
 
+      <FilterChips
+        v-if="state === 'list' && hasChips"
+        v-model="filter"
+        :folders="folderList"
+        :unfiled="unfiledCount"
+      />
+
       <template v-if="state === 'list'">
-        <ul class="widget-list notes-list">
+        <ul v-if="shownNotes.length > 0" class="widget-list notes-list">
           <li
-            v-for="note in notes"
+            v-for="note in shownNotes"
             :key="note.id"
             class="note-row"
             role="button"
@@ -79,6 +102,12 @@ async function openSettings(): Promise<void> {
             </div>
           </li>
         </ul>
+        <div v-else class="widget-empty">
+          <div>
+            <span><AppIcon name="note" :size="21" /></span>
+            <h3>{{ t("nothingInFolder") }}</h3>
+          </div>
+        </div>
       </template>
 
       <template v-else-if="state === 'editor'">

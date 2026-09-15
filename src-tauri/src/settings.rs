@@ -3,6 +3,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
@@ -17,6 +18,8 @@ pub struct HandySettings {
     pub theme: String,
     pub language: String,
     pub refresh_interval_secs: u32,
+    /// 设置窗口自身的位置与大小：关闭只是隐藏，下次打开恢复原状。
+    pub window: MainWindowConfig,
     pub todo_widget: WidgetConfig,
     pub notes_widget: WidgetConfig,
     pub hud: HudConfig,
@@ -30,6 +33,7 @@ impl Default for HandySettings {
             theme: "auto".to_string(),
             language: "zh".to_string(),
             refresh_interval_secs: 30,
+            window: MainWindowConfig::default(),
             todo_widget: WidgetConfig {
                 enabled: true,
                 ..WidgetConfig::default()
@@ -37,6 +41,21 @@ impl Default for HandySettings {
             notes_widget: WidgetConfig::default(),
             hud: HudConfig::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MainWindowConfig {
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl Default for MainWindowConfig {
+    fn default() -> Self {
+        Self { x: None, y: None, width: 940.0, height: 640.0 }
     }
 }
 
@@ -51,6 +70,8 @@ pub struct WidgetConfig {
     pub opacity: f64,
     pub always_on_top: bool,
     pub show_completed: bool,
+    /// 吸附屏幕边缘：拖到边缘附近松手后自动贴合对齐。
+    pub snap_to_edge: bool,
 }
 
 impl Default for WidgetConfig {
@@ -64,6 +85,7 @@ impl Default for WidgetConfig {
             opacity: 1.0,
             always_on_top: false,
             show_completed: false,
+            snap_to_edge: false,
         }
     }
 }
@@ -74,9 +96,8 @@ pub struct HudConfig {
     pub enabled: bool,
     pub x: Option<f64>,
     pub y: Option<f64>,
-    pub opacity: f64,
     pub always_on_top: bool,
-    /// Handy 的缩放档位：0.8 / 1.0 / 1.25（右键菜单与设置窗口共用）。
+    /// Handy 的缩放：0.2–1.5 无极调整（右键菜单滑块与设置窗口共用）。
     pub scale: f64,
     /// Pill mode: dock to the nearest screen edge and expand on hover.
     pub snap_to_edge: bool,
@@ -92,7 +113,6 @@ impl Default for HudConfig {
             enabled: false,
             x: None,
             y: None,
-            opacity: 1.0,
             always_on_top: true,
             scale: 1.0,
             snap_to_edge: false,
@@ -124,9 +144,10 @@ impl HandySettings {
             cfg.height = cfg.height.clamp(200.0, 1200.0);
             cfg.opacity = cfg.opacity.clamp(0.3, 1.0);
         }
-        self.hud.opacity = self.hud.opacity.clamp(0.3, 1.0);
-        self.hud.scale = self.hud.scale.clamp(0.6, 1.6);
+        self.hud.scale = self.hud.scale.clamp(0.2, 1.5);
         self.hud.stealth_delay_secs = self.hud.stealth_delay_secs.clamp(5, 600);
+        self.window.width = self.window.width.clamp(560.0, 2560.0);
+        self.window.height = self.window.height.clamp(420.0, 1600.0);
         self
     }
 }
@@ -202,7 +223,22 @@ pub fn load_settings(app: AppHandle) -> HandySettings {
 /// Save, broadcast to every window, then apply window visibility/geometry.
 #[tauri::command]
 pub fn save_settings(app: AppHandle, settings: HandySettings) -> Result<HandySettings, String> {
-    let clean = settings.sanitized();
+    let mut clean = settings.sanitized();
+    // 窗口几何（位置与大小）由后端在拖动后防抖落盘，前端持有的快照可能
+    // 过期：保存任何设置时都以磁盘上的几何为准，窗口尺寸不再被带回旧值。
+    let disk = load_from_disk(&app);
+    clean.todo_widget.x = disk.todo_widget.x;
+    clean.todo_widget.y = disk.todo_widget.y;
+    clean.todo_widget.width = disk.todo_widget.width;
+    clean.todo_widget.height = disk.todo_widget.height;
+    clean.notes_widget.x = disk.notes_widget.x;
+    clean.notes_widget.y = disk.notes_widget.y;
+    clean.notes_widget.width = disk.notes_widget.width;
+    clean.notes_widget.height = disk.notes_widget.height;
+    clean.hud.x = disk.hud.x;
+    clean.hud.y = disk.hud.y;
+    crate::HUD_LAST_SCALE.store((clean.hud.scale * 1000.0).round() as u32, Ordering::SeqCst);
+    crate::HUD_LIVE_SCALE.store(0, Ordering::SeqCst);
     save_to_disk(&app, &clean)?;
     let _ = app.emit("settings-changed", &clean);
     crate::apply_windows(&app, &clean);

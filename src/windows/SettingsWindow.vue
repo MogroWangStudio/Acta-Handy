@@ -5,13 +5,13 @@ import { countsFor } from "../lib/view";
 import { shortDate } from "../lib/format";
 import { t } from "../lib/i18n";
 import { initStore, persistSettings, refreshActaData, store } from "../lib/store";
-import { onHudAnim, pickDataFolder, refreshData, showWindow } from "../lib/api";
+import { onHudAnim, pickDataFolder, refreshData, setHudScale, showWindow } from "../lib/api";
 import AppIcon from "../components/AppIcon.vue";
 import LogoWordmark from "../components/LogoWordmark.vue";
 import SelectMenu from "../components/SelectMenu.vue";
 import type { IconName } from "../types/icons";
 
-const APP_VERSION = "0.5.0";
+const APP_VERSION = "0.6.0";
 
 type SectionId = "data" | "todoWidget" | "notesWidget" | "hud" | "general" | "about";
 const active = ref<SectionId>("data");
@@ -68,12 +68,13 @@ const THEME_OPTIONS = computed(() => [
   { value: "dark", label: t("themeDark") },
 ]);
 
-const HUD_SIZES = [
-  { value: 0.8, label: () => t("hudSizeSmall") },
-  { value: 1, label: () => t("hudSizeMedium") },
-  { value: 1.25, label: () => t("hudSizeLarge") },
-];
-const hudSizeOptions = computed(() => HUD_SIZES.map((o) => ({ value: o.value, label: o.label() })));
+const HUD_SCALE_MIN = 0.2;
+const HUD_SCALE_MAX = 1.5;
+
+/** 滑块拖动中的实时预览：后端立即重排 HUD 窗口，Handy 以脚底为锚变大变小。 */
+function previewHudScale(): void {
+  void setHudScale(store.settings.hud.scale);
+}
 
 /** 贴边过渡动画播放中：Handy 相关设置暂时不可操作。 */
 const hudBusy = ref(false);
@@ -231,6 +232,10 @@ onBeforeUnmount(() => {
               <button class="switch" role="switch" :aria-checked="store.settings.todoWidget.alwaysOnTop" @click="store.settings.todoWidget.alwaysOnTop = !store.settings.todoWidget.alwaysOnTop; save()" />
             </div>
             <div class="row">
+              <span class="row-copy"><b>{{ t("widgetSnapToEdge") }}</b><small>{{ t("widgetSnapToEdgeDesc") }}</small></span>
+              <button class="switch" role="switch" :aria-checked="store.settings.todoWidget.snapToEdge" @click="store.settings.todoWidget.snapToEdge = !store.settings.todoWidget.snapToEdge; save()" />
+            </div>
+            <div class="row">
               <span class="row-copy"><b>{{ t("showCompleted") }}</b><small>{{ t("showCompletedDesc") }}</small></span>
               <button class="switch" role="switch" :aria-checked="store.settings.todoWidget.showCompleted" @click="store.settings.todoWidget.showCompleted = !store.settings.todoWidget.showCompleted; save()" />
             </div>
@@ -256,6 +261,10 @@ onBeforeUnmount(() => {
               <span class="row-copy"><b>{{ t("alwaysOnTop") }}</b><small>{{ t("alwaysOnTopDesc") }}</small></span>
               <button class="switch" role="switch" :aria-checked="store.settings.notesWidget.alwaysOnTop" @click="store.settings.notesWidget.alwaysOnTop = !store.settings.notesWidget.alwaysOnTop; save()" />
             </div>
+            <div class="row">
+              <span class="row-copy"><b>{{ t("widgetSnapToEdge") }}</b><small>{{ t("widgetSnapToEdgeDesc") }}</small></span>
+              <button class="switch" role="switch" :aria-checked="store.settings.notesWidget.snapToEdge" @click="store.settings.notesWidget.snapToEdge = !store.settings.notesWidget.snapToEdge; save()" />
+            </div>
           </div>
         </section>
 
@@ -272,11 +281,19 @@ onBeforeUnmount(() => {
             </div>
             <div class="row">
               <span class="row-copy"><b>{{ t("hudSize") }}</b><small>{{ t("hudSizeDesc") }}</small></span>
-              <SelectMenu v-model="store.settings.hud.scale" :options="hudSizeOptions" @update:model-value="save" />
-            </div>
-            <div class="row">
-              <span class="row-copy"><b>{{ t("opacity") }}</b><small>{{ t("opacityDesc") }}</small></span>
-              <input v-model.number="store.settings.hud.opacity" class="slider" type="range" min="0.3" max="1" step="0.05" @change="save" />
+              <span class="scale-row">
+                <input
+                  v-model.number="store.settings.hud.scale"
+                  class="slider"
+                  type="range"
+                  :min="HUD_SCALE_MIN"
+                  :max="HUD_SCALE_MAX"
+                  step="0.05"
+                  @input="previewHudScale"
+                  @change="save"
+                />
+                <b class="scale-pct">{{ Math.round(store.settings.hud.scale * 100) }}%</b>
+              </span>
             </div>
             <div class="row">
               <span class="row-copy"><b>{{ t("alwaysOnTop") }}</b><small>{{ t("hudAlwaysOnTopDesc") }}</small></span>
@@ -452,6 +469,11 @@ onBeforeUnmount(() => {
 .mono { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .slider { width: 170px; accent-color: var(--sage); }
+
+/* Handy 大小：无极滑块 + 当前百分比的组合行。 */
+.scale-row { display: flex; align-items: center; gap: 10px; }
+.scale-row .slider { width: 150px; }
+.scale-pct { min-width: 44px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 
 .status {
   margin: 0 0 18px;

@@ -16,17 +16,22 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewWi
 use settings::HandySettings;
 
 const TRAY_ID: &str = "acta-handy-tray";
-const WIDGET_LABELS: [&str; 3] = ["todo-widget", "notes-widget", "hud"];
+/// 几何需要持久化的窗口（设置窗口关闭只是隐藏，位置与大小同样记忆）。
+const GEOMETRY_LABELS: [&str; 4] = ["main", "todo-widget", "notes-widget", "hud"];
+/// 仅 Windows 的图标修复使用；非 Windows 编译时视为保留。
+#[allow(dead_code)]
 const ALL_WINDOWS: [&str; 4] = ["main", "todo-widget", "notes-widget", "hud"];
 
 /// HUD shapes. `Free` is Handy standing on the desktop; `Peek` is the
 /// edge-clinging pose (part of the body clipped beyond the screen edge);
-/// `Panel` is the expanded quick-edit panel with Handy beside it.
+/// `Panel` is the expanded quick-edit panel with Handy beside it; `Menu` is
+/// the in-app context menu (a size slider + close, drawn by the webview).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HudMode {
     Free,
     Peek,
     Panel,
+    Menu,
 }
 
 impl HudMode {
@@ -35,6 +40,7 @@ impl HudMode {
             HudMode::Free => 0,
             HudMode::Peek => 1,
             HudMode::Panel => 2,
+            HudMode::Menu => 3,
         }
     }
 
@@ -42,6 +48,7 @@ impl HudMode {
         match id {
             1 => HudMode::Peek,
             2 => HudMode::Panel,
+            3 => HudMode::Menu,
             _ => HudMode::Free,
         }
     }
@@ -50,15 +57,21 @@ impl HudMode {
 // 当前 HUD 形态与面板停靠信息：位置映射（面板开合时 Handy 原地不动）和
 // 几何持久化都要读它们。
 static HUD_MODE: AtomicU32 = AtomicU32::new(0);
-/// 面板里 Handy 是否站在窗口右侧（也是贴边停靠时的屏幕右缘一侧）。
+/// 面板 / 菜单形态里 Handy 是否站在窗口右侧（也是贴边停靠时的屏幕右缘一侧）。
 static HUD_PANEL_SIDE_RIGHT: AtomicBool = AtomicBool::new(true);
-/// 面板形态下 Handy 脚底离窗口底部的逻辑距离：面板向上展开被屏幕上缘
-/// 截断时变大，Handy 的屏幕位置因此保持不动。
+/// 面板 / 菜单形态下 Handy 脚底离窗口底部的逻辑距离：面板向上展开被屏幕
+/// 上缘截断时变大，Handy 的屏幕位置因此保持不动。
 static HUD_PANEL_LIFT: Mutex<f64> = Mutex::new(5.0);
-/// 自由形态打开面板时的 Handy 窗口位置：面板被拖动或重排时以它为锚。
+/// 自由形态打开面板 / 菜单时的 Handy 窗口位置：面板被拖动或重排时以它为锚。
 static HUD_ANCHOR: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 /// 贴边过渡动画播放中：期间设置应用与几何持久化全部让路。
 static HUD_ANIMATING: AtomicBool = AtomicBool::new(false);
+/// 菜单是从探头形态打开的：重排（拖缩放滑块）时保持 dock 式布局。
+static HUD_MENU_FROM_PEEK: AtomicBool = AtomicBool::new(false);
+/// 滑块拖动中的实时缩放（×1000；0 表示无实时值，读设置文件）。
+pub(crate) static HUD_LIVE_SCALE: AtomicU32 = AtomicU32::new(0);
+/// 最近一次生效的缩放（×1000）：滑块连续拖动时用来反推旧窗口几何。
+pub(crate) static HUD_LAST_SCALE: AtomicU32 = AtomicU32::new(0);
 
 /// While true, a watcher thread polls the cursor and wakes the HUD when the
 /// pointer comes near (stealth mode keeps the window invisible otherwise).
@@ -70,16 +83,22 @@ fn hud_mode() -> HudMode {
 }
 
 fn hud_scale(app: &AppHandle) -> f64 {
+    let live = HUD_LIVE_SCALE.load(Ordering::SeqCst);
+    if live > 0 {
+        return live as f64 / 1000.0;
+    }
     settings::load_from_disk(app).hud.scale
 }
 
-/// 各形态的窗口逻辑尺寸。面板宽度 = 固定卡片宽 + Handy 站位（随缩放加宽），
-/// 高度固定；Handy 在面板里的站位与自由形态完全同偏移，开合时不挪位。
+/// 各形态的窗口逻辑尺寸。面板 / 菜单宽度 = 固定卡片宽 + Handy 站位（随缩放
+/// 加宽）；Handy 在面板 / 菜单里的站位与自由形态完全同偏移，开合时不挪位。
 fn hud_sizes(mode: HudMode, s: f64) -> (f64, f64) {
     match mode {
         HudMode::Free => (92.0 * s, 136.0 * s),
         HudMode::Peek => (50.0 * s, 146.0 * s),
         HudMode::Panel => (310.0 + 82.0 * s, 470.0),
+        // 菜单卡片不随缩放，窗口高度取「卡片高度」与「Handy 站高」的较大者。
+        HudMode::Menu => (232.0 + 82.0 * s, (136.0 * s + 16.0).max(184.0)),
     }
 }
 
@@ -100,12 +119,43 @@ struct HudPlacement {
     lift: f64,
 }
 
+/// 把 monitor 尺寸换算成逻辑坐标矩形。
+fn monitor_rect(m: &tauri::Monitor) -> (f64, f64, f64, f64) {
+    let scale = m.scale_factor();
+    (
+        m.position().x as f64 / scale,
+        m.position().y as f64 / scale,
+        m.size().width as f64 / scale,
+        m.size().height as f64 / scale,
+    )
+}
+
 #[tauri::command]
 fn read_acta_data(folder: String) -> Result<acta::ActaData, String> {
     if folder.trim().is_empty() {
         return Err("尚未选择 Acta 数据文件夹".to_string());
     }
     acta::read_data_folder(std::path::Path::new(&folder))
+}
+
+/// Acta 客户端运行时可能正持有数据文件句柄（Windows 上表现为共享冲突），
+/// 写入按退避节奏短暂重试，等它放手后再落盘；仍失败才把原因交还前端。
+fn with_write_retry<T>(op: impl Fn() -> Result<T, String>) -> Result<T, String> {
+    let mut last = String::new();
+    for attempt in 0..4 {
+        match op() {
+            Ok(value) => return Ok(value),
+            Err(e) => {
+                last = e;
+                if attempt < 3 {
+                    std::thread::sleep(Duration::from_millis(120 << attempt));
+                }
+            }
+        }
+    }
+    Err(format!(
+        "{last}\n文件可能正被 Acta 占用（Acta 正在同步或写入），请稍后重试。"
+    ))
 }
 
 #[tauri::command]
@@ -117,7 +167,7 @@ fn write_todo_check(
     if folder.trim().is_empty() {
         return Err("尚未选择 Acta 数据文件夹".to_string());
     }
-    let todo = acta::write_todo_check(std::path::Path::new(&folder), &patch)?;
+    let todo = with_write_retry(|| acta::write_todo_check(std::path::Path::new(&folder), &patch))?;
     let _ = app.emit("acta-data-changed", ());
     Ok(todo)
 }
@@ -131,7 +181,7 @@ fn write_note(
     if folder.trim().is_empty() {
         return Err("尚未选择 Acta 数据文件夹".to_string());
     }
-    let note = acta::write_note(std::path::Path::new(&folder), &patch)?;
+    let note = with_write_retry(|| acta::write_note(std::path::Path::new(&folder), &patch))?;
     let _ = app.emit("acta-data-changed", ());
     Ok(note)
 }
@@ -152,6 +202,28 @@ fn show_window(app: AppHandle, label: String) {
 #[tauri::command]
 fn quit_app(app: AppHandle) {
     app.exit(0);
+}
+
+/// 自由面板布局：Handy 原地站好（fx, fy 为自由形态窗口位置），卡片朝桌面
+/// 内侧展开、被屏幕边缘截断时抬高兜底。返回窗口位置、Handy 是否在右侧、lift。
+#[allow(clippy::too_many_arguments)]
+fn free_floating_layout(
+    m: &tauri::Monitor,
+    s: f64,
+    width: f64,
+    height: f64,
+    fx: f64,
+    fy: f64,
+) -> (f64, f64, bool, f64) {
+    let (mx, my, mw, mh) = monitor_rect(m);
+    let (fw, fh) = hud_sizes(HudMode::Free, s);
+    let right = fx + fw / 2.0 >= mx + mw / 2.0;
+    let feet_y = fy + fh - 5.0 * s;
+    let py = (fy + fh - height).clamp(my + 8.0, (my + mh - height - 8.0).max(my + 8.0));
+    let base_x = if right { fx + fw - width } else { fx };
+    let px = base_x.clamp(mx + 4.0, (mx + mw - width - 4.0).max(mx + 4.0));
+    let lift = (feet_y - py).max(5.0 * s);
+    (px, py, right, lift)
 }
 
 /// 把 HUD 窗口调整为指定形态并返回停靠信息。`restore` 表示使用设置里的
@@ -180,10 +252,7 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
         HUD_MODE.store(mode.to_id(), Ordering::SeqCst);
         return None;
     };
-    let mx = m.position().x as f64 / scale;
-    let my = m.position().y as f64 / scale;
-    let mw = m.size().width as f64 / scale;
-    let mh = m.size().height as f64 / scale;
+    let (mx, my, mw, mh) = monitor_rect(&m);
     let prev = hud_mode();
     let default = default_position(app, width, 0.0);
 
@@ -195,9 +264,9 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
                     (Some(a), Some(b)) => (a, b),
                     _ => (default.x, default.y),
                 }
-            } else if prev == HudMode::Panel {
-                // 面板收起：按面板停靠信息反推自由位姿，Handy 原地站好。
-                let (pw, ph) = hud_sizes(HudMode::Panel, s);
+            } else if prev == HudMode::Panel || prev == HudMode::Menu {
+                // 面板 / 菜单收起：按停靠信息反推自由位姿，Handy 原地站好。
+                let (pw, ph) = hud_sizes(prev, s);
                 let (fw, fh) = hud_sizes(HudMode::Free, s);
                 let lift = *HUD_PANEL_LIFT.lock().unwrap();
                 match (cur_x, cur_y) {
@@ -258,13 +327,30 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
                         _ => (default.x, default.y),
                     },
                 };
-                let (fw, fh) = hud_sizes(HudMode::Free, s);
-                let right = fx + fw / 2.0 >= mx + mw / 2.0;
-                let feet_y = fy + fh - 5.0 * s;
-                let py = (fy + fh - height).clamp(my + 8.0, (my + mh - height - 8.0).max(my + 8.0));
-                let base_x = if right { fx + fw - width } else { fx };
-                let px = base_x.clamp(mx + 4.0, (mx + mw - width - 4.0).max(mx + 4.0));
-                let lift = (feet_y - py).max(5.0 * s);
+                let (px, py, right, lift) = free_floating_layout(&m, s, width, height, fx, fy);
+                HUD_PANEL_SIDE_RIGHT.store(right, Ordering::SeqCst);
+                *HUD_PANEL_LIFT.lock().unwrap() = lift;
+                let _ = HUD_ANCHOR.lock().unwrap().replace((fx, fy));
+                (px, py, Some(HudPlacement { side: side_str(!right), lift }))
+            }
+        }
+        HudMode::Menu => {
+            if HUD_MENU_FROM_PEEK.load(Ordering::SeqCst) {
+                // 从探头打开：窗口直接 dock 到探头一侧，Handy 跳回屏内站好。
+                let dock_left = !HUD_PANEL_SIDE_RIGHT.load(Ordering::SeqCst);
+                let x = if dock_left { mx } else { mx + mw - width };
+                let top = cur_y.unwrap_or(my + 20.0);
+                let y = top.clamp(my + 12.0, (my + mh - height - 12.0).max(my + 12.0));
+                HUD_PANEL_SIDE_RIGHT.store(!dock_left, Ordering::SeqCst);
+                *HUD_PANEL_LIFT.lock().unwrap() = 5.0 * s;
+                (x, y, Some(HudPlacement { side: side_str(dock_left), lift: 5.0 * s }))
+            } else {
+                // 从自由形态打开：Handy 原地不动，菜单卡片朝桌面内侧展开。
+                let (fx, fy) = match (cur_x, cur_y) {
+                    (Some(a), Some(b)) => (a, b),
+                    _ => (default.x, default.y),
+                };
+                let (px, py, right, lift) = free_floating_layout(&m, s, width, height, fx, fy);
                 HUD_PANEL_SIDE_RIGHT.store(right, Ordering::SeqCst);
                 *HUD_PANEL_LIFT.lock().unwrap() = lift;
                 let _ = HUD_ANCHOR.lock().unwrap().replace((fx, fy));
@@ -292,11 +378,92 @@ fn set_hud_mode(app: AppHandle, mode: String) -> Option<HudPlacement> {
     apply_hud(&app, mode, false)
 }
 
+/// 滑块拖动中的实时缩放：窗口尺寸与站位立即跟随，落盘在 commit 时一次完成。
+#[tauri::command]
+fn set_hud_scale(app: AppHandle, scale: f64) -> Option<HudPlacement> {
+    let new_raw = (scale.clamp(0.2, 1.5) * 1000.0).round() as u32;
+    let old_raw = HUD_LIVE_SCALE.load(Ordering::SeqCst);
+    HUD_LIVE_SCALE.store(new_raw, Ordering::SeqCst);
+    if old_raw == new_raw || HUD_ANIMATING.load(Ordering::SeqCst) {
+        return None;
+    }
+    let old_s = if old_raw == 0 {
+        settings::load_from_disk(&app).hud.scale
+    } else {
+        old_raw as f64 / 1000.0
+    };
+    let window = app.get_webview_window("hud")?;
+    let mode = hud_mode();
+    if mode == HudMode::Panel || mode == HudMode::Menu {
+        return apply_hud(&app, mode, false);
+    }
+    // 自由 / 探头形态：以脚底为锚缩放，Handy 站在原地长大或缩小。
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten())?;
+    let scale_factor = monitor.scale_factor();
+    let (mx, my, mw, mh) = monitor_rect(&monitor);
+    let pos = window.outer_position().ok()?;
+    let (px, py) = (pos.x as f64 / scale_factor, pos.y as f64 / scale_factor);
+    let new_s = new_raw as f64 / 1000.0;
+    let (x, y, side) = match mode {
+        HudMode::Peek => {
+            let (pw, ph) = hud_sizes(HudMode::Peek, old_s);
+            let (nw, nh) = hud_sizes(HudMode::Peek, new_s);
+            let dock_left = px + pw / 2.0 < mx + mw / 2.0;
+            let feet_y = py + ph - 8.0 * old_s;
+            let y = (feet_y - (nh - 8.0 * new_s)).clamp(my + 12.0, (my + mh - nh - 12.0).max(my + 12.0));
+            let x = if dock_left { mx } else { mx + mw - nw };
+            HUD_PANEL_SIDE_RIGHT.store(!dock_left, Ordering::SeqCst);
+            (x, y, Some(HudPlacement { side: side_str(dock_left), lift: 8.0 * new_s }))
+        }
+        _ => {
+            let (pw, ph) = hud_sizes(HudMode::Free, old_s);
+            let (nw, nh) = hud_sizes(HudMode::Free, new_s);
+            let feet_x = px + pw / 2.0;
+            let feet_y = py + ph - 5.0 * old_s;
+            let x = feet_x - nw / 2.0;
+            let y = feet_y - (nh - 5.0 * new_s);
+            (x, y, None)
+        }
+    };
+    let _ = window.set_size(LogicalSize::new(hud_sizes(mode, new_s).0, hud_sizes(mode, new_s).1));
+    let _ = window.set_position(LogicalPosition::new(x, y));
+    side
+}
+
+/// 滑块松手：把实时缩落盘并广播（清掉实时值，之后以设置文件为准）。
+#[tauri::command]
+fn commit_hud_scale(app: AppHandle) {
+    let raw = HUD_LIVE_SCALE.swap(0, Ordering::SeqCst);
+    if raw == 0 {
+        return;
+    }
+    let mut s = settings::load_from_disk(&app);
+    s.hud.scale = raw as f64 / 1000.0;
+    HUD_LAST_SCALE.store(raw, Ordering::SeqCst);
+    let _ = settings::save_to_disk(&app, &s);
+    let _ = app.emit("settings-changed", &s);
+}
+
+/// 右键菜单里的「关闭 Handy」；重新开启后窗口以吸附 / 自由形态回来。
+#[tauri::command]
+fn set_hud_enabled(app: AppHandle, enabled: bool) {
+    let mut s = settings::load_from_disk(&app);
+    s.hud.enabled = enabled;
+    let _ = settings::save_to_disk(&app, &s);
+    let _ = app.emit("settings-changed", &s);
+    apply_windows(&app, &s);
+}
+
 // --- 贴边过渡动画 -----------------------------------------------------------
 //
-// 开启吸附时：Handy 保持站姿缓入缓出地滑向屏幕边缘、整个滑出消失，再以
-// 探头位姿贴边出现；关闭时反向——以站姿出现在边缘，滑回记忆位置。播放
-// 期间 HUD_ANIMATING 为真，期间落下的设置变更在动画结束时统一生效。
+// 开启吸附时：Handy 保持站姿、朝目标边探身，先缓入缓出地走到屏幕边缘（身
+// 体完整可见），再加速钻出屏幕，最后以探头位姿贴边出现；关闭时反向——以
+// 站姿出现在边缘，滑回记忆位置。播放期间 HUD_ANIMATING 为真，期间落下的设
+// 置变更在动画结束时统一生效。
 
 fn ease_in_out_cubic(t: f64) -> f64 {
     if t < 0.5 {
@@ -304,6 +471,10 @@ fn ease_in_out_cubic(t: f64) -> f64 {
     } else {
         1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
     }
+}
+
+fn ease_in_cubic(t: f64) -> f64 {
+    t * t * t
 }
 
 fn ease_out_cubic(t: f64) -> f64 {
@@ -333,16 +504,42 @@ fn animate_window_to(
     }
 }
 
+/// 滑向屏幕边缘的两段式：前段缓入缓出走到贴边，后段加速钻出——身体被屏幕
+/// 边缘裁切的时间被压到最短，观感是「钻进边缘」而不是「被切掉」。
+fn animate_window_depart(
+    window: &WebviewWindow,
+    from: (f64, f64),
+    edge: (f64, f64),
+    off: (f64, f64),
+    ms: u64,
+) {
+    let split = 0.62;
+    let dur = Duration::from_millis(ms);
+    let t0 = Instant::now();
+    loop {
+        let t = (t0.elapsed().as_secs_f64() / dur.as_secs_f64()).min(1.0);
+        let ((tx, ty), e) = if t < split {
+            (edge, ease_in_out_cubic(t / split))
+        } else {
+            (off, ease_in_cubic((t - split) / (1.0 - split)))
+        };
+        let _ = window.set_position(LogicalPosition::new(
+            from.0 + (tx - from.0) * e,
+            from.1 + (ty - from.1) * e,
+        ));
+        if t >= 1.0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(16));
+    }
+}
+
 fn spawn_snap_animation(app: &AppHandle, target: HudMode) {
     if HUD_ANIMATING.swap(true, Ordering::SeqCst) {
         return;
     }
     let app = app.clone();
     let to_peek = target == HudMode::Peek;
-    let _ = app.emit(
-        "hud-anim",
-        serde_json::json!({ "phase": "start", "to": if to_peek { "peek" } else { "free" } }),
-    );
     std::thread::spawn(move || {
         let bail = |app: &AppHandle| {
             HUD_ANIMATING.store(false, Ordering::SeqCst);
@@ -364,10 +561,7 @@ fn spawn_snap_animation(app: &AppHandle, target: HudMode) {
             return;
         };
         let scale = m.scale_factor();
-        let mx = m.position().x as f64 / scale;
-        let my = m.position().y as f64 / scale;
-        let mw = m.size().width as f64 / scale;
-        let mh = m.size().height as f64 / scale;
+        let (mx, my, mw, mh) = monitor_rect(&m);
         let (cur_x, cur_y) = match window.outer_position().ok() {
             Some(p) => (p.x as f64 / scale, p.y as f64 / scale),
             None => (mx, my),
@@ -376,12 +570,22 @@ fn spawn_snap_animation(app: &AppHandle, target: HudMode) {
         if to_peek {
             let (w, _h) = hud_sizes(HudMode::Free, s);
             let dock_left = cur_x + w / 2.0 < mx + mw / 2.0;
+            let side = side_str(dock_left);
+            // start 即带方向：前端让 Handy 提前朝目标边探身，动画有身体语言。
+            let _ = app.emit(
+                "hud-anim",
+                serde_json::json!({ "phase": "start", "to": "peek", "side": side }),
+            );
             let (pw, ph) = hud_sizes(HudMode::Peek, s);
             let dock_x = if dock_left { mx } else { mx + mw - pw };
             let dock_y = cur_y.clamp(my + 12.0, (my + mh - ph - 12.0).max(my + 12.0));
+            let edge_x = if dock_left { mx } else { mx + mw - w };
             let off_x = if dock_left { mx - w } else { mx + mw };
-            animate_window_to(&window, (cur_x, cur_y), (off_x, cur_y), 640, ease_in_out_cubic);
-            let _ = app.emit("hud-anim", serde_json::json!({ "phase": "reveal", "to": "peek" }));
+            animate_window_depart(&window, (cur_x, cur_y), (edge_x, cur_y), (off_x, cur_y), 720);
+            let _ = app.emit(
+                "hud-anim",
+                serde_json::json!({ "phase": "reveal", "to": "peek", "side": side }),
+            );
             let _ = window.set_size(LogicalSize::new(pw, ph));
             let _ = window.set_position(LogicalPosition::new(dock_x, dock_y));
             HUD_PANEL_SIDE_RIGHT.store(!dock_left, Ordering::SeqCst);
@@ -390,7 +594,15 @@ fn spawn_snap_animation(app: &AppHandle, target: HudMode) {
         } else {
             let (fw, fh) = hud_sizes(HudMode::Free, s);
             let dock_left = cur_x + 25.0 * s < mx + mw / 2.0;
-            let _ = app.emit("hud-anim", serde_json::json!({ "phase": "reveal", "to": "free" }));
+            let side = side_str(dock_left);
+            let _ = app.emit(
+                "hud-anim",
+                serde_json::json!({ "phase": "start", "to": "free", "side": side }),
+            );
+            let _ = app.emit(
+                "hud-anim",
+                serde_json::json!({ "phase": "reveal", "to": "free", "side": side }),
+            );
             let _ = window.set_size(LogicalSize::new(fw, fh));
             HUD_MODE.store(HudMode::Free.to_id(), Ordering::SeqCst);
             let hud = settings::load_from_disk(&app).hud;
@@ -414,52 +626,74 @@ fn spawn_snap_animation(app: &AppHandle, target: HudMode) {
     });
 }
 
-// --- Handy 右键菜单 ---------------------------------------------------------
+// --- Handy 右键菜单（应用内自绘，替代原生菜单） ------------------------------
 
 #[tauri::command]
 fn popup_hud_menu(app: AppHandle) {
     if HUD_ANIMATING.load(Ordering::SeqCst) {
         return;
     }
-    let Some(window) = app.get_webview_window("hud") else {
+    if hud_mode() == HudMode::Menu {
+        return;
+    }
+    HUD_MENU_FROM_PEEK.store(hud_mode() == HudMode::Peek, Ordering::SeqCst);
+    let Some(placement) = apply_hud(&app, HudMode::Menu, false) else {
         return;
     };
-    let s = settings::load_from_disk(&app);
-    let (small, medium, large, close) = if s.is_chinese() {
-        ("小", "中", "大", "关闭 Handy")
-    } else {
-        ("Small", "Medium", "Large", "Close Handy")
-    };
-    let scale = s.hud.scale;
-    let checked = |v: f64| (scale - v).abs() < 0.01;
-    let build = || -> tauri::Result<Menu<tauri::Wry>> {
-        let small_item =
-            CheckMenuItem::with_id(&app, "hud-scale-small", small, true, checked(0.8), None::<&str>)?;
-        let medium_item =
-            CheckMenuItem::with_id(&app, "hud-scale-medium", medium, true, checked(1.0), None::<&str>)?;
-        let large_item =
-            CheckMenuItem::with_id(&app, "hud-scale-large", large, true, checked(1.25), None::<&str>)?;
-        let sep = PredefinedMenuItem::separator(&app)?;
-        let close_item = MenuItem::with_id(&app, "hud-close", close, true, None::<&str>)?;
-        Menu::with_items(&app, &[&small_item, &medium_item, &large_item, &sep, &close_item])
-    };
-    if let Ok(menu) = build() {
-        let _ = window.popup_menu(&menu);
+    // 聚焦窗口：失焦收起菜单（等价系统菜单的点外关闭），Escape 也能生效。
+    if let Some(window) = app.get_webview_window("hud") {
+        let _ = window.set_focus();
     }
+    let _ = app.emit("hud-menu", &placement);
 }
 
-fn handle_hud_menu_event(app: &AppHandle, id: &str) {
-    let mut s = settings::load_from_disk(app);
-    match id {
-        "hud-scale-small" => s.hud.scale = 0.8,
-        "hud-scale-medium" => s.hud.scale = 1.0,
-        "hud-scale-large" => s.hud.scale = 1.25,
-        "hud-close" => s.hud.enabled = false,
-        _ => return,
+// --- eye tracking ------------------------------------------------------------
+//
+// 眼睛跟随光标：一个轻量线程按 32ms 轮询光标相对 Handy 的方向，只有方向
+// 变化超过量化步长才广播，静止时不产生事件。
+
+static HUD_EYE_WATCH: AtomicBool = AtomicBool::new(false);
+static HUD_EYE_RUNNING: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn set_hud_eye_watch(app: AppHandle, watch: bool) {
+    HUD_EYE_WATCH.store(watch, Ordering::SeqCst);
+    if !watch || HUD_EYE_RUNNING.swap(true, Ordering::SeqCst) {
+        return;
     }
-    let _ = settings::save_to_disk(app, &s);
-    let _ = app.emit("settings-changed", &s);
-    apply_windows(app, &s);
+    std::thread::spawn(move || {
+        let mut last: Option<(i32, i32)> = None;
+        while HUD_EYE_WATCH.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(32));
+            let Some(window) = app.get_webview_window("hud") else {
+                break;
+            };
+            if !window.is_visible().unwrap_or(false) {
+                break;
+            }
+            let (Ok(cursor), Ok(pos), Ok(size)) = (
+                app.cursor_position(),
+                window.outer_position(),
+                window.outer_size(),
+            ) else {
+                continue;
+            };
+            let scale = window.scale_factor().unwrap_or(1.0);
+            let center_x = pos.x as f64 + size.width as f64 / 2.0;
+            let center_y = pos.y as f64 + size.height as f64 / 2.0;
+            let dx = (cursor.x as f64 - center_x) / scale;
+            let dy = (cursor.y as f64 - center_y) / scale;
+            let nx = (dx / 420.0).clamp(-1.0, 1.0);
+            let ny = (dy / 420.0).clamp(-1.0, 1.0);
+            // 量化到 1/24 档：光标微微抖动不广播，视线保持安静。
+            let key = ((nx * 24.0).round() as i32, (ny * 24.0).round() as i32);
+            if last != Some(key) {
+                last = Some(key);
+                let _ = app.emit("hud-gaze", serde_json::json!({ "nx": nx, "ny": ny }));
+            }
+        }
+        HUD_EYE_RUNNING.store(false, Ordering::SeqCst);
+    });
 }
 
 /// Enable (or disable) the near-cursor watch. While active, a thread polls the
@@ -524,11 +758,7 @@ fn position_on_screen(
         return None;
     }
     let visible = monitors.iter().any(|m| {
-        let scale = m.scale_factor();
-        let mx = m.position().x as f64 / scale;
-        let my = m.position().y as f64 / scale;
-        let mw = m.size().width as f64 / scale;
-        let mh = m.size().height as f64 / scale;
+        let (mx, my, mw, mh) = monitor_rect(m);
         x + width > mx + 40.0 && x < mx + mw - 40.0 && y + height > my + 40.0 && y < my + mh - 40.0
     });
     if visible {
@@ -540,12 +770,47 @@ fn position_on_screen(
 
 fn default_position(app: &AppHandle, width: f64, offset: f64) -> LogicalPosition<f64> {
     if let Some(m) = app.primary_monitor().ok().flatten() {
-        let scale = m.scale_factor();
-        let right = (m.position().x as f64 + m.size().width as f64) / scale - width - 20.0;
-        let top = m.position().y as f64 / scale + 20.0 + offset;
+        let (mx, my, mw, _mh) = monitor_rect(&m);
+        let right = mx + mw - width - 20.0;
+        let top = my + 20.0 + offset;
         return LogicalPosition::new(right.max(20.0), top);
     }
     LogicalPosition::new(60.0, 60.0)
+}
+
+// --- widget edge snapping ----------------------------------------------------
+
+const SNAP_THRESHOLD: f64 = 48.0;
+const SNAP_MARGIN: f64 = 8.0;
+
+/// 磁吸：离屏幕边缘足够近时贴合到固定边距处（左右与上下各自判定）。
+fn snap_to_edges(snap: bool, x: f64, y: f64, w: f64, h: f64, m: &tauri::Monitor) -> (f64, f64) {
+    if !snap {
+        return (x, y);
+    }
+    let (mx, my, mw, mh) = monitor_rect(m);
+    let mut sx = x;
+    if (x - (mx + SNAP_MARGIN)).abs() <= SNAP_THRESHOLD {
+        sx = mx + SNAP_MARGIN;
+    } else if ((mx + mw - SNAP_MARGIN) - (x + w)).abs() <= SNAP_THRESHOLD {
+        sx = mx + mw - w - SNAP_MARGIN;
+    }
+    let mut sy = y;
+    if (y - (my + SNAP_MARGIN)).abs() <= SNAP_THRESHOLD {
+        sy = my + SNAP_MARGIN;
+    } else if ((my + mh - SNAP_MARGIN) - (y + h)).abs() <= SNAP_THRESHOLD {
+        sy = my + mh - h - SNAP_MARGIN;
+    }
+    (sx, sy)
+}
+
+fn widget_snap(app: &AppHandle, label: &str) -> bool {
+    let s = settings::load_from_disk(app);
+    match label {
+        "todo-widget" => s.todo_widget.snap_to_edge,
+        "notes-widget" => s.notes_widget.snap_to_edge,
+        _ => false,
+    }
 }
 
 fn apply_widget(
@@ -567,10 +832,23 @@ fn apply_widget(
     }
     let (width, height) = (width.max(200.0), height.max(100.0));
     let _ = window.set_size(LogicalSize::new(width, height));
+    let snap = widget_snap(app, label);
     let pos = match (x, y) {
         (Some(x), Some(y)) => {
-            position_on_screen(app, x, y, width, height)
-                .unwrap_or_else(|| LogicalPosition::new(x, y))
+            let p = position_on_screen(app, x, y, width, height)
+                .unwrap_or_else(|| LogicalPosition::new(x, y));
+            let m = window
+                .current_monitor()
+                .ok()
+                .flatten()
+                .or_else(|| app.primary_monitor().ok().flatten());
+            match m {
+                Some(m) => {
+                    let (sx, sy) = snap_to_edges(snap, p.x, p.y, width, height, &m);
+                    LogicalPosition::new(sx, sy)
+                }
+                None => p,
+            }
         }
         _ => {
             let offset = match label {
@@ -585,7 +863,23 @@ fn apply_widget(
     let _ = window.show();
 }
 
+/// 设置窗口自身：恢复记忆的位置与大小（首次运行为默认 940×640）。
+fn apply_main_window(app: &AppHandle, s: &HandySettings) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let width = s.window.width.max(860.0);
+    let height = s.window.height.max(560.0);
+    let _ = window.set_size(LogicalSize::new(width, height));
+    if let (Some(x), Some(y)) = (s.window.x, s.window.y) {
+        let pos = position_on_screen(app, x, y, width, height)
+            .unwrap_or_else(|| LogicalPosition::new(x, y));
+        let _ = window.set_position(pos);
+    }
+}
+
 pub fn apply_windows(app: &AppHandle, s: &HandySettings) {
+    apply_main_window(app, s);
     apply_widget(
         app,
         "todo-widget",
@@ -626,9 +920,9 @@ pub fn apply_windows(app: &AppHandle, s: &HandySettings) {
         if HUD_ANIMATING.load(Ordering::SeqCst) {
             return; // 贴边动画结束时统一重放当前设置
         }
-        if hud_mode() == HudMode::Panel {
-            // 面板开着：按新设置（缩放 / 吸附）原样重排面板。
-            apply_hud(app, HudMode::Panel, false);
+        if hud_mode() == HudMode::Panel || hud_mode() == HudMode::Menu {
+            // 面板 / 菜单开着：按新设置（缩放 / 吸附）原样重排。
+            apply_hud(app, hud_mode(), false);
             return;
         }
         if window.is_visible().unwrap_or(false) && hud_mode() != mode {
@@ -644,7 +938,7 @@ pub fn apply_windows(app: &AppHandle, s: &HandySettings) {
 static PENDING_SAVES: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
 fn schedule_geometry_save(app: &AppHandle, label: &str) {
-    if !WIDGET_LABELS.contains(&label) {
+    if !GEOMETRY_LABELS.contains(&label) {
         return;
     }
     {
@@ -683,28 +977,48 @@ fn persist_geometry(app: &AppHandle, label: &str) {
     let width = size.width as f64 / scale;
     let height = size.height as f64 / scale;
     match label {
-        "todo-widget" => {
-            s.todo_widget.x = x;
-            s.todo_widget.y = y;
-            s.todo_widget.width = width;
-            s.todo_widget.height = height;
+        "main" => {
+            s.window.x = x;
+            s.window.y = y;
+            s.window.width = width;
+            s.window.height = height;
         }
-        "notes-widget" => {
-            s.notes_widget.x = x;
-            s.notes_widget.y = y;
-            s.notes_widget.width = width;
-            s.notes_widget.height = height;
+        "todo-widget" | "notes-widget" => {
+            // 吸附开启：拖动停歇后先贴合到边缘，再记忆贴合后的位置。
+            let snap = widget_snap(app, label);
+            let (mut px, mut py) = (x.unwrap_or(0.0), y.unwrap_or(0.0));
+            if snap {
+                if let Some(m) = window.current_monitor().ok().flatten() {
+                    let (sx, sy) = snap_to_edges(true, px, py, width, height, &m);
+                    if (sx - px).abs() > 0.5 || (sy - py).abs() > 0.5 {
+                        let _ = window.set_position(LogicalPosition::new(sx, sy));
+                        if let (Ok(p), Ok(sc)) = (window.outer_position(), window.scale_factor()) {
+                            px = p.x as f64 / sc;
+                            py = p.y as f64 / sc;
+                        }
+                    }
+                }
+            }
+            let widget = if label == "todo-widget" {
+                &mut s.todo_widget
+            } else {
+                &mut s.notes_widget
+            };
+            widget.x = Some(px);
+            widget.y = Some(py);
+            widget.width = width;
+            widget.height = height;
         }
         "hud" => {
             if HUD_ANIMATING.load(Ordering::SeqCst) {
                 return;
             }
             match hud_mode() {
-                HudMode::Panel => {
-                    // 面板可拖动：只把当前位姿反推为自由锚点，不落盘。
+                HudMode::Panel | HudMode::Menu => {
+                    // 面板 / 菜单可拖动：只把当前位姿反推为自由锚点，不落盘。
                     if let (Some(px), Some(py)) = (x, y) {
                         let sc = s.hud.scale;
-                        let (pw, ph) = hud_sizes(HudMode::Panel, sc);
+                        let (pw, ph) = hud_sizes(hud_mode(), sc);
                         let (fw, fh) = hud_sizes(HudMode::Free, sc);
                         let lift = *HUD_PANEL_LIFT.lock().unwrap();
                         let feet_y = py + ph - lift;
@@ -722,8 +1036,7 @@ fn persist_geometry(app: &AppHandle, label: &str) {
                     if let (Ok(scale), Ok(monitor)) = (window.scale_factor(), window.current_monitor())
                     {
                         if let Some(m) = monitor {
-                            let mx = m.position().x as f64 / scale;
-                            let mw = m.size().width as f64 / scale;
+                            let (mx, _my, mw, _mh) = monitor_rect(&m);
                             let dock_left = pos.x as f64 / scale + width / 2.0 < mx + mw / 2.0;
                             let x = if dock_left { mx } else { mx + mw - width };
                             let _ = window.set_position(LogicalPosition::new(
@@ -746,6 +1059,9 @@ fn persist_geometry(app: &AppHandle, label: &str) {
         _ => return,
     }
     let _ = settings::save_to_disk(app, &s);
+    // 几何是后端独自持有的真相：广播最新设置，前端快照不再过期，
+    // 保存其它设置时也就不会把窗口尺寸带回旧值。
+    let _ = app.emit("settings-changed", &s);
 }
 
 // --- data-change watcher ---------------------------------------------------
@@ -915,12 +1231,15 @@ pub fn run() {
             show_window,
             quit_app,
             set_hud_mode,
+            set_hud_scale,
+            commit_hud_scale,
+            set_hud_enabled,
+            set_hud_eye_watch,
             set_hud_cursor_watch,
             popup_hud_menu,
             settings::load_settings,
             settings::save_settings
         ])
-        .on_menu_event(|app, event| handle_hud_menu_event(app, event.id().as_ref()))
         .setup(|app| {
             let handle = app.handle().clone();
             #[cfg(windows)]
