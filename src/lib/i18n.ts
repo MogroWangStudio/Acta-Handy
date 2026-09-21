@@ -5,6 +5,12 @@ const zh = {
   appNameCn: "行记·便易",
   tagline: "把 Acta 的待办与笔记带到桌面上",
 
+  // Window titles（浏览器里调试各窗口时靠 document.title 区分）
+  titleMain: "Acta Handy · 设置",
+  titleTodoWidget: "Acta Handy · 待办小组件",
+  titleNotesWidget: "Acta Handy · 笔记小组件",
+  titleHud: "Acta Handy · Handy",
+
   // Nav
   navData: "数据源",
   navTodoWidget: "待办小组件",
@@ -15,7 +21,8 @@ const zh = {
 
   // Data source
   dataFolder: "Acta 数据文件夹",
-  dataFolderDesc: "在 Acta 的「设置 → 数据」中同步出的数据文件夹，Acta Handy 只读取，不写入。",
+  dataFolderDesc:
+    "在 Acta 的「设置 → 数据」中同步出的数据文件夹。Acta Handy 与它共用数据：勾选待办、编辑笔记都会像 Acta 一样直接写回，每次修改都留有历史，可随时恢复。",
   pickFolder: "选择文件夹",
   rescan: "重新读取",
   noFolder: "尚未选择数据文件夹",
@@ -27,6 +34,31 @@ const zh = {
   dataWarnings: (n: number) => `${n} 个条目文件读取失败，已跳过`,
   minutes: "分钟",
   seconds: "秒",
+
+  // Edit history
+  historyTitle: "修改历史",
+  historyDesc: "每一次写回都有留档，必要时可恢复到改动前的模样。",
+  historyEmpty: "还没有修改记录",
+  historySummary: (kind: string, title: string, completed: boolean | null | undefined) => {
+    const name = title || "未命名";
+    switch (kind) {
+      case "todo-check":
+        return completed === true ? `完成待办「${name}」` : completed === false ? `重开待办「${name}」` : `调整子任务「${name}」`;
+      case "note-edit":
+        return `编辑笔记「${name}」`;
+      case "note-create":
+        return `新建笔记「${name}」`;
+      case "todo-restore":
+        return `恢复待办「${name}」到更早状态`;
+      case "note-restore":
+        return `恢复笔记「${name}」到更早状态`;
+      default:
+        return name;
+    }
+  },
+  historyRestore: "恢复",
+  historyRestoreFail: "恢复失败",
+  historyNoBefore: "新建的条目没有更早的状态",
 
   // Widgets
   enableWidget: "启用小组件",
@@ -62,7 +94,8 @@ const zh = {
 
   // About
   aboutTitle: "Acta Handy 行记·便易",
-  aboutDesc: "Acta Handy 读取 Acta（行记）的数据文件夹，把今日待办、最近笔记以小组件和悬浮窗的形式常驻桌面。",
+  aboutDesc:
+    "Acta Handy 与 Acta（行记）共用数据文件夹，把今日待办、最近笔记以小组件和悬浮窗的形式常驻桌面；修改像 Acta 一样直接写回，并留有可回溯的历史。",
   version: "版本",
   author: "作者",
   license: "开源协议",
@@ -122,6 +155,11 @@ const en: Dict = {
   appNameCn: "Acta Handy",
   tagline: "Acta's todos and notes, right on your desktop",
 
+  titleMain: "Acta Handy · Settings",
+  titleTodoWidget: "Acta Handy · Todo Widget",
+  titleNotesWidget: "Acta Handy · Notes Widget",
+  titleHud: "Acta Handy · Handy",
+
   navData: "Data Source",
   navTodoWidget: "Todo Widget",
   navNotesWidget: "Notes Widget",
@@ -131,7 +169,7 @@ const en: Dict = {
 
   dataFolder: "Acta Data Folder",
   dataFolderDesc:
-    "The data folder Acta syncs to (Settings → Data). Acta Handy only reads it, never writes.",
+    "The data folder Acta syncs to (Settings → Data). Acta Handy shares it with Acta: checks and edits are written back in Acta's own format, and every change is kept in a history you can restore.",
   pickFolder: "Choose Folder",
   rescan: "Reload",
   noFolder: "No data folder selected",
@@ -143,6 +181,31 @@ const en: Dict = {
   dataWarnings: (n: number) => `${n} item files failed to load and were skipped`,
   minutes: "min",
   seconds: "sec",
+
+  // Edit history
+  historyTitle: "Edit history",
+  historyDesc: "Every write-back is recorded — restore an earlier state whenever you need to.",
+  historyEmpty: "No changes yet",
+  historySummary: (kind: string, title: string, completed: boolean | null | undefined) => {
+    const name = title || "Untitled";
+    switch (kind) {
+      case "todo-check":
+        return completed === true ? `Completed “${name}”` : completed === false ? `Reopened “${name}”` : `Updated subtasks of “${name}”`;
+      case "note-edit":
+        return `Edited note “${name}”`;
+      case "note-create":
+        return `Created note “${name}”`;
+      case "todo-restore":
+        return `Restored “${name}” to an earlier state`;
+      case "note-restore":
+        return `Restored “${name}” to an earlier state`;
+      default:
+        return name;
+    }
+  },
+  historyRestore: "Restore",
+  historyRestoreFail: "Restore failed",
+  historyNoBefore: "Nothing earlier to restore for a created item",
 
   enableWidget: "Enable widget",
   enableWidgetDesc: "Show this widget on your desktop.",
@@ -176,7 +239,7 @@ const en: Dict = {
 
   aboutTitle: "Acta Handy",
   aboutDesc:
-    "Acta Handy reads Acta's data folder and keeps your todos and notes on the desktop as widgets and a floating HUD.",
+    "Acta Handy shares Acta's data folder and keeps your todos and notes on the desktop as widgets and a floating HUD — edits are written back in Acta's format, with a restorable history.",
   version: "Version",
   author: "Author",
   license: "License",

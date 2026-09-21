@@ -402,7 +402,7 @@ fn base36(mut n: u64) -> String {
 }
 
 /// New item ids, same shape as Acta's `uid()`: base36 timestamp + base36 salt.
-fn gen_item_id() -> String {
+pub fn gen_item_id() -> String {
     use std::sync::atomic::{AtomicU32, Ordering};
     static SALT: AtomicU32 = AtomicU32::new(0);
     let d = SystemTime::now()
@@ -475,9 +475,20 @@ pub struct TodoCheckPatch {
     pub tasks: Vec<TaskCheck>,
 }
 
+/// 写入前的条目快照：修改历史用它实现「恢复到当时」。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistorySnapshot {
+    pub item: Value,
+    /// V3 笔记的 `.md` 正文（item 里不含正文）；todo 与 V2 笔记为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
 /// Check off a todo (or its subtasks). Mirrors Acta's `setTodoCompletion`:
 /// `completed` and every task's `done` travel together, `updatedAt` refreshes.
-pub fn write_todo_check(folder: &Path, patch: &TodoCheckPatch) -> Result<ActaTodo, String> {
+/// Returns the todo as written plus the pre-write snapshot for the history.
+pub fn write_todo_check(folder: &Path, patch: &TodoCheckPatch) -> Result<(ActaTodo, HistorySnapshot), String> {
     let _guard = WRITE_LOCK.lock().unwrap();
     let manifest_path = folder.join(MANIFEST_FILE);
     let mut manifest: Value = serde_json::from_str(
@@ -509,6 +520,7 @@ pub fn write_todo_check(folder: &Path, patch: &TodoCheckPatch) -> Result<ActaTod
         .ok_or_else(|| format!("待办文件缺少 item：{file}"))?;
 
     let updated_at = now_iso();
+    let snapshot = HistorySnapshot { item: item.clone(), body: None };
     item["completed"] = Value::Bool(patch.completed);
     if let Some(tasks) = item.get_mut("tasks").and_then(Value::as_array_mut) {
         for task in tasks {
@@ -527,7 +539,7 @@ pub fn write_todo_check(folder: &Path, patch: &TodoCheckPatch) -> Result<ActaTod
     touch_manifest(&mut manifest, &patch.todo_id, "todos", &updated_at)?;
     write_json_atomic(&manifest_path, &manifest)?;
 
-    Ok(parse_todo(&patch.todo_id, &item_snapshot))
+    Ok((parse_todo(&patch.todo_id, &item_snapshot), snapshot))
 }
 
 #[derive(Debug, Deserialize)]
@@ -544,7 +556,8 @@ pub struct NotePatch {
 /// Create or edit a note. V3 notes update the config JSON + `.md` body;
 /// legacy V2 notes (single JSON with an HTML body) get their body written
 /// back as escaped paragraphs — Acta upgrades those folders to V3 on next load.
-pub fn write_note(folder: &Path, patch: &NotePatch) -> Result<ActaNote, String> {
+/// Returns the note as written plus the pre-write snapshot (None = created).
+pub fn write_note(folder: &Path, patch: &NotePatch) -> Result<(ActaNote, Option<HistorySnapshot>), String> {
     let _guard = WRITE_LOCK.lock().unwrap();
     let manifest_path = folder.join(MANIFEST_FILE);
     let mut manifest: Value = serde_json::from_str(
@@ -579,6 +592,12 @@ pub fn write_note(folder: &Path, patch: &NotePatch) -> Result<ActaNote, String> 
                         .map_err(|e| format!("读取笔记失败：{config}（{e}）"))?,
                 )
                 .map_err(|e| format!("笔记解析失败：{config}（{e}）"))?;
+                let snapshot = HistorySnapshot {
+                    item: doc["item"].clone(),
+                    body: markdown_file
+                        .as_ref()
+                        .and_then(|md| fs::read_to_string(folder.join("notes").join(md)).ok()),
+                };
                 if let Some(title) = &patch.title {
                     doc["item"]["title"] = Value::String(title.clone());
                 }
@@ -589,10 +608,13 @@ pub fn write_note(folder: &Path, patch: &NotePatch) -> Result<ActaNote, String> 
                         write_file_atomic(&folder.join("notes").join(md), body.as_bytes())?;
                     }
                 }
-                Ok(parse_note(
-                    note_id,
-                    &doc["item"],
-                    patch.body_markdown.clone().unwrap_or_default(),
+                Ok((
+                    parse_note(
+                        note_id,
+                        &doc["item"],
+                        patch.body_markdown.clone().unwrap_or_default(),
+                    ),
+                    Some(snapshot),
                 ))
             } else {
                 // V2: single JSON with an HTML body.
@@ -603,6 +625,7 @@ pub fn write_note(folder: &Path, patch: &NotePatch) -> Result<ActaNote, String> 
                         .map_err(|e| format!("读取笔记失败：{file}（{e}）"))?,
                 )
                 .map_err(|e| format!("笔记解析失败：{file}（{e}）"))?;
+                let snapshot = HistorySnapshot { item: doc["item"].clone(), body: None };
                 if let Some(title) = &patch.title {
                     doc["item"]["title"] = Value::String(title.clone());
                 }
@@ -615,10 +638,106 @@ pub fn write_note(folder: &Path, patch: &NotePatch) -> Result<ActaNote, String> 
                     .body_markdown
                     .clone()
                     .unwrap_or_else(|| html_to_plain(&jstr(&doc["item"], "body")));
-                Ok(parse_note(note_id, &doc["item"], plain))
+                Ok((parse_note(note_id, &doc["item"], plain), Some(snapshot)))
             }
         }
-        _ => create_note(folder, &mut manifest, patch),
+        _ => create_note(folder, &mut manifest, patch).map(|note| (note, None)),
+    }
+}
+
+/// Restore an item to a pre-write snapshot: the snapshot's item is written
+/// back whole (for V3 notes the markdown body too), `updatedAt` refreshes and
+/// the manifest is rewritten last — exactly like any other write. Returns the
+/// snapshot of what the item looked like *before* the restore, so the restore
+/// itself becomes a step in the history.
+pub fn restore_item(
+    folder: &Path,
+    kind: &str,
+    item_id: &str,
+    snap: &HistorySnapshot,
+) -> Result<Option<HistorySnapshot>, String> {
+    let _guard = WRITE_LOCK.lock().unwrap();
+    let manifest_path = folder.join(MANIFEST_FILE);
+    let mut manifest: Value = serde_json::from_str(
+        &fs::read_to_string(&manifest_path).map_err(|e| format!("读取 manifest 失败：{e}"))?,
+    )
+    .map_err(|e| format!("manifest 解析失败：{e}"))?;
+
+    let entries = manifest
+        .get_mut(kind)
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| format!("manifest 缺少 {kind} 数组"))?;
+    let entry = entries
+        .iter()
+        .find(|e| e.get("id").and_then(Value::as_str) == Some(item_id))
+        .ok_or_else(|| format!("manifest 中未找到条目：{item_id}"))?
+        .clone();
+    let updated_at = now_iso();
+
+    match kind {
+        "todos" => {
+            let file = jopt_str(&entry, "file").ok_or_else(|| format!("待办 {item_id} 缺少文件名"))?;
+            let todo_path = folder.join("todos").join(&file);
+            let mut doc: Value = serde_json::from_str(
+                &fs::read_to_string(&todo_path).map_err(|e| format!("读取待办失败：{file}（{e}）"))?,
+            )
+            .map_err(|e| format!("待办解析失败：{file}（{e}）"))?;
+            let previous = HistorySnapshot { item: doc["item"].clone(), body: None };
+            doc["item"] = snap.item.clone();
+            doc["item"]["updatedAt"] = Value::String(updated_at.clone());
+            write_json_atomic(&todo_path, &doc)?;
+            touch_manifest(&mut manifest, item_id, "todos", &updated_at)?;
+            write_json_atomic(&manifest_path, &manifest)?;
+            Ok(Some(previous))
+        }
+        "notes" => {
+            let config_file = jopt_str(&entry, "config");
+            let markdown_file = jopt_str(&entry, "markdown");
+            let legacy_file = jopt_str(&entry, "file");
+            if let Some(config) = config_file {
+                // V3: config JSON + markdown sidecar.
+                let config_path = folder.join("notes").join(&config);
+                let mut doc: Value = serde_json::from_str(
+                    &fs::read_to_string(&config_path)
+                        .map_err(|e| format!("读取笔记失败：{config}（{e}）"))?,
+                )
+                .map_err(|e| format!("笔记解析失败：{config}（{e}）"))?;
+                let previous = HistorySnapshot {
+                    item: doc["item"].clone(),
+                    body: markdown_file
+                        .as_ref()
+                        .and_then(|md| fs::read_to_string(folder.join("notes").join(md)).ok()),
+                };
+                doc["item"] = snap.item.clone();
+                doc["item"]["updatedAt"] = Value::String(updated_at.clone());
+                write_json_atomic(&config_path, &doc)?;
+                if let Some(body) = &snap.body {
+                    if let Some(md) = &markdown_file {
+                        write_file_atomic(&folder.join("notes").join(md), body.as_bytes())?;
+                    }
+                }
+                touch_manifest(&mut manifest, item_id, "notes", &updated_at)?;
+                write_json_atomic(&manifest_path, &manifest)?;
+                Ok(Some(previous))
+            } else {
+                // V2: single JSON with an HTML body (the body lives in the item).
+                let file = legacy_file.ok_or_else(|| format!("笔记 {item_id} 缺少文件名"))?;
+                let note_path = folder.join("notes").join(&file);
+                let mut doc: Value = serde_json::from_str(
+                    &fs::read_to_string(&note_path)
+                        .map_err(|e| format!("读取笔记失败：{file}（{e}）"))?,
+                )
+                .map_err(|e| format!("笔记解析失败：{file}（{e}）"))?;
+                let previous = HistorySnapshot { item: doc["item"].clone(), body: None };
+                doc["item"] = snap.item.clone();
+                doc["item"]["updatedAt"] = Value::String(updated_at.clone());
+                write_json_atomic(&note_path, &doc)?;
+                touch_manifest(&mut manifest, item_id, "notes", &updated_at)?;
+                write_json_atomic(&manifest_path, &manifest)?;
+                Ok(Some(previous))
+            }
+        }
+        _ => Err(format!("未知的条目类型：{kind}")),
     }
 }
 

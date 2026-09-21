@@ -69,9 +69,16 @@ const pointerInside = ref(false);
 const departing = ref(false);
 const closing = ref(false);
 const animating = ref(false);
+const panelFromPeek = ref(false);
 
-const charW = computed(() => Math.round((shape.value === "peek" ? 68 : 64) * s.value));
+const charW = computed(() => Math.round((shape.value === "peek" || fromPeek.value ? 68 : 64) * s.value));
 const panelLift = computed(() => (lift.value > 0 ? lift.value : 5 * s.value));
+
+/** 面板 / 菜单是否从探头形态展开：Handy 保持探头位姿原地不动，身体仍被
+    屏幕边缘裁掉，卡片朝桌面内侧展开（后端 peek_docked_layout 配合）。 */
+const fromPeek = computed(() =>
+  shape.value === "panel" ? panelFromPeek.value : shape.value === "menu" ? prevShape.value === "peek" : false,
+);
 
 // --- 眼睛跟随 ----------------------------------------------------------------
 // 后端以 32ms 轮询光标方向广播 hud-gaze；这里换算成 viewBox 单位的偏移，
@@ -235,6 +242,7 @@ async function openPanel(): Promise<void> {
   // 先切布局再等后端展开窗口：两种布局里 Handy 在窗口内的位置完全一致
   // （14s 内缩、5s 落地），窗口扩开时 Handy 纹丝不动；卡片以透明起点从
   // Handy 一侧弹出，同一实例继续眨眼呼吸，没有任何重挂载的闪动。
+  panelFromPeek.value = false;
   shape.value = "panel";
   try {
     const placement = await setHudMode("panel");
@@ -250,6 +258,8 @@ async function openPanel(): Promise<void> {
 
 async function expand(): Promise<void> {
   if (shape.value !== "peek" || animating.value || closing.value) return;
+  // Handy 保持探头位姿原地不动，窗口朝桌面内侧扩开（后端配合），只展开面板。
+  panelFromPeek.value = true;
   const placement = await setHudMode("panel");
   if (placement) {
     edge.value = placement.side;
@@ -272,6 +282,7 @@ async function collapse(): Promise<void> {
     lift.value = placement.lift;
   }
   shape.value = target;
+  panelFromPeek.value = false;
   armStealth();
 }
 
@@ -365,6 +376,7 @@ function onAnim(payload: {
   } else if (payload.phase === "end") {
     animating.value = false;
     departing.value = false;
+    panelFromPeek.value = false;
     shape.value = cfg.value.snapToEdge ? "peek" : "free";
     armStealth();
   }
@@ -443,7 +455,7 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="hud-root"
-    :class="[shape, `edge-${edge}`, { departing, hidden }]"
+    :class="[shape, `edge-${edge}`, { departing, hidden, 'from-peek': fromPeek }]"
     :style="{ '--s': s, '--lift': panelLift, '--eye-x': eye.x, '--eye-y': eye.y, '--shake': `${shakeAngle}deg` }"
     @pointerenter="onEnter"
     @pointerleave="onLeave"
@@ -538,6 +550,12 @@ onBeforeUnmount(() => {
 .hud-root.panel .handy-pos, .hud-root.menu .handy-pos { bottom: calc(var(--lift) * 1px); }
 .hud-root.panel.edge-right .handy-pos, .hud-root.menu.edge-right .handy-pos { left: calc(100% - 78px * var(--s)); }
 .hud-root.panel.edge-left .handy-pos, .hud-root.menu.edge-left .handy-pos { left: calc(14px * var(--s)); }
+/* 从探头形态展开的面板 / 菜单：Handy 仍以探头位姿扒在屏幕边缘，身体探出
+   窗口（被裁掉），与 peek 的内偏移一致——开合只动窗口，不动 Handy。 */
+.hud-root.panel.from-peek.edge-left .handy-pos, .hud-root.menu.from-peek.edge-left .handy-pos { left: calc(-18px * var(--s)); }
+.hud-root.panel.from-peek.edge-right .handy-pos, .hud-root.menu.from-peek.edge-right .handy-pos { left: calc(100% - 46px * var(--s)); }
+.hud-root.panel.from-peek.edge-left .handy-tilt, .hud-root.menu.from-peek.edge-left .handy-tilt { transform: rotate(9deg); transform-origin: 0 100%; }
+.hud-root.panel.from-peek.edge-right .handy-tilt, .hud-root.menu.from-peek.edge-right .handy-tilt { transform: rotate(-9deg); transform-origin: 100% 100%; }
 
 /* 探头时朝桌面一侧探身：以抓边的脚底为轴；开合时倾角平滑过渡，
    滑向边缘的途中先探一半（departing），像跑向边缘扒住。 */

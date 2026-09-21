@@ -144,6 +144,42 @@ let nextCallbackId = 1;
 
 const settings = mockSettings();
 
+// --- 修改历史（与 Rust 端 handy-history.json 同构，新→旧） -------------------
+
+interface MockHistoryEntry {
+  id: string;
+  time: string;
+  kind: string;
+  folder: string;
+  itemId: string;
+  title: string;
+  completed?: boolean | null;
+  before?: { item: Record<string, unknown>; body?: string | null } | null;
+}
+
+const history: MockHistoryEntry[] = [];
+
+function recordHistory(
+  folder: string,
+  kind: string,
+  itemId: string,
+  title: string,
+  completed?: boolean | null,
+  before?: MockHistoryEntry["before"],
+): void {
+  history.unshift({
+    id: `h-mock-${(history.length + 1).toString(36)}-${Date.now().toString(36)}`,
+    time: new Date().toISOString(),
+    kind,
+    folder,
+    itemId,
+    title,
+    completed,
+    before,
+  });
+  if (history.length > 100) history.length = 100;
+}
+
 function invoke(cmd: string, args: Record<string, unknown>): unknown {
   switch (cmd) {
     case "load_settings":
@@ -159,12 +195,14 @@ function invoke(cmd: string, args: Record<string, unknown>): unknown {
       const patch = args.patch as { todoId: string; completed: boolean; tasks: Array<{ id: string; done: boolean }> };
       const todo = data.todos.find((t) => t.id === patch.todoId);
       if (!todo) return Promise.reject("未找到待办");
+      const before = JSON.parse(JSON.stringify(todo));
       todo.completed = patch.completed;
       for (const task of todo.tasks) {
         const check = patch.tasks.find((c) => c.id === task.id);
         if (check) task.done = check.done;
       }
       todo.updatedAt = new Date().toISOString();
+      recordHistory(String(args.folder ?? ""), "todo-check", todo.id, todo.title, todo.completed, { item: before });
       return Promise.resolve(JSON.parse(JSON.stringify(todo)));
     }
     case "write_note": {
@@ -179,14 +217,46 @@ function invoke(cmd: string, args: Record<string, unknown>): unknown {
           bodyMarkdown: patch.bodyMarkdown ?? "",
         };
         data.notes.unshift(note);
+        recordHistory(String(args.folder ?? ""), "note-create", note.id, note.title, null, null);
         return Promise.resolve(note);
       }
       const note = data.notes.find((n) => n.id === patch.noteId);
       if (!note) return Promise.reject("未找到笔记");
+      const before = JSON.parse(JSON.stringify(note));
       if (patch.title !== null && patch.title !== undefined) note.title = patch.title;
       if (patch.bodyMarkdown !== null && patch.bodyMarkdown !== undefined) note.bodyMarkdown = patch.bodyMarkdown;
       note.updatedAt = new Date().toISOString();
+      recordHistory(String(args.folder ?? ""), "note-edit", note.id, note.title, null, { item: before, body: before.bodyMarkdown });
       return Promise.resolve(JSON.parse(JSON.stringify(note)));
+    }
+    case "read_history":
+      return JSON.parse(JSON.stringify(history.filter((e) => e.folder === args.folder)));
+    case "restore_history": {
+      const entry = history.find((e) => e.id === args.entryId);
+      if (!entry) return Promise.reject("未找到这条历史记录");
+      if (entry.folder !== args.folder) return Promise.reject("这条历史来自另一个数据文件夹");
+      if (!entry.before) return Promise.reject("新建的条目没有更早的状态可以恢复");
+      const { item, body } = entry.before;
+      if (entry.kind.startsWith("todo")) {
+        const todo = data.todos.find((t) => t.id === entry.itemId);
+        if (!todo) return Promise.reject("未找到待办");
+        const previous = JSON.parse(JSON.stringify(todo));
+        todo.completed = Boolean(item.completed);
+        todo.tasks =
+          (item.tasks as Array<{ id: string; text: string; done: boolean }>)?.map((t) => ({ ...t })) ?? [];
+        todo.updatedAt = new Date().toISOString();
+        recordHistory(entry.folder, "todo-restore", todo.id, todo.title, todo.completed, { item: previous });
+      } else {
+        const note = data.notes.find((n) => n.id === entry.itemId);
+        if (!note) return Promise.reject("未找到笔记");
+        const previous = JSON.parse(JSON.stringify(note));
+        note.title = String(item.title ?? "");
+        note.bodyMarkdown = body ?? note.bodyMarkdown;
+        note.updatedAt = new Date().toISOString();
+        recordHistory(entry.folder, "note-restore", note.id, note.title, null, { item: previous, body: previous.bodyMarkdown });
+      }
+      fire("acta-data-changed", null);
+      return null;
     }
     case "set_hud_mode":
       return Promise.resolve(args.mode === "free" ? null : { side: "right", lift: 5 });

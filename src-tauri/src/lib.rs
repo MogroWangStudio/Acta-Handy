@@ -1,6 +1,7 @@
 //! Acta Handy — desktop widgets and a floating HUD for Acta's 行记 data.
 
 mod acta;
+mod history;
 mod settings;
 
 use std::collections::HashSet;
@@ -167,7 +168,10 @@ fn write_todo_check(
     if folder.trim().is_empty() {
         return Err("尚未选择 Acta 数据文件夹".to_string());
     }
-    let todo = with_write_retry(|| acta::write_todo_check(std::path::Path::new(&folder), &patch))?;
+    let (todo, before) =
+        with_write_retry(|| acta::write_todo_check(std::path::Path::new(&folder), &patch))?;
+    // 修改历史：记下写入前的完整待办，供「数据源」页回溯恢复。
+    history::record(&app, &folder, "todo-check", &patch.todo_id, &todo.title, Some(todo.completed), Some(before));
     let _ = app.emit("acta-data-changed", ());
     Ok(todo)
 }
@@ -181,9 +185,56 @@ fn write_note(
     if folder.trim().is_empty() {
         return Err("尚未选择 Acta 数据文件夹".to_string());
     }
-    let note = with_write_retry(|| acta::write_note(std::path::Path::new(&folder), &patch))?;
+    let (note, before) =
+        with_write_retry(|| acta::write_note(std::path::Path::new(&folder), &patch))?;
+    // 新建没有「之前」可记；编辑记下写入前的标题、正文。
+    let kind = if before.is_some() { "note-edit" } else { "note-create" };
+    history::record(&app, &folder, kind, &note.id, &note.title, None, before);
     let _ = app.emit("acta-data-changed", ());
     Ok(note)
+}
+
+#[tauri::command]
+fn read_history(app: AppHandle, folder: String) -> Vec<history::HistoryEntry> {
+    history::load(&app, &folder)
+}
+
+/// 把一条历史恢复回写入前的模样；恢复本身也是一次写入，同样留档。
+#[tauri::command]
+fn restore_history(app: AppHandle, folder: String, entry_id: String) -> Result<(), String> {
+    if folder.trim().is_empty() {
+        return Err("尚未选择 Acta 数据文件夹".to_string());
+    }
+    let entry = history::find(&app, &entry_id).ok_or("未找到这条历史记录")?;
+    if entry.folder != folder {
+        return Err("这条历史来自另一个数据文件夹".to_string());
+    }
+    let Some(before) = entry.before else {
+        return Err("新建的条目没有更早的状态可以恢复".to_string());
+    };
+    let kind = match entry.kind.as_str() {
+        "todo-check" | "todo-restore" => "todos",
+        "note-edit" | "note-create" | "note-restore" => "notes",
+        other => return Err(format!("未知的历史类型：{other}")),
+    };
+    let previous = with_write_retry(|| {
+        acta::restore_item(std::path::Path::new(&folder), kind, &entry.item_id, &before)
+    })?;
+    // 恢复后的完成状态 = 快照里的 completed（todo）；恢复动作自身记一条。
+    let restored_completed = before.item.get("completed").and_then(serde_json::Value::as_bool);
+    let restore_kind = if kind == "todos" { "todo-restore" } else { "note-restore" };
+    let title = jstr_title(&before.item);
+    history::record(&app, &folder, restore_kind, &entry.item_id, &title, restored_completed, previous);
+    let _ = app.emit("acta-data-changed", ());
+    Ok(())
+}
+
+/// 快照 item 的标题（todo 的 `title` / note 的 `title`）。
+fn jstr_title(item: &serde_json::Value) -> String {
+    item.get("title")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
 }
 
 #[tauri::command]
@@ -222,8 +273,50 @@ fn free_floating_layout(
     let py = (fy + fh - height).clamp(my + 8.0, (my + mh - height - 8.0).max(my + 8.0));
     let base_x = if right { fx + fw - width } else { fx };
     let px = base_x.clamp(mx + 4.0, (mx + mw - width - 4.0).max(mx + 4.0));
-    let lift = (feet_y - py).max(5.0 * s);
+    // lift 是 Handy 脚底离窗口底部的距离：脚底位置固定，窗口被屏幕截断时
+    // 窗口底随之上移，lift 随之变大，Handy 在窗口内的站位补齐差值。
+    let lift = ((py + height) - feet_y).max(5.0 * s);
     (px, py, right, lift)
+}
+
+/// 贴边探头打开面板 / 菜单：Handy 保持探头位姿原地不动，窗口朝桌面内侧
+/// 扩开、底部对齐探头窗口底部（脚底屏幕位置不变），被屏幕上缘截断时以
+/// lift 抬高窗口兜底。返回窗口位置、停靠边（Handy 在左）与 lift。
+#[allow(clippy::too_many_arguments)]
+fn peek_docked_layout(
+    m: &tauri::Monitor,
+    s: f64,
+    width: f64,
+    height: f64,
+    prev: HudMode,
+    cur_x: Option<f64>,
+    cur_y: Option<f64>,
+) -> (f64, f64, bool, f64) {
+    let (mx, my, mw, mh) = monitor_rect(m);
+    let (pw, ph) = hud_sizes(HudMode::Peek, s);
+    // 探头与面板 / 菜单都 dock 在屏幕边缘（x 只取屏幕左缘或右缘 - 窗口宽），
+    // 以探头窗口的宽度判定停靠边，重排（已在面板 / 菜单形态）时同样成立。
+    let dock_left = match cur_x {
+        Some(a) => a + pw / 2.0 < mx + mw / 2.0,
+        None => true,
+    };
+    // 脚底 = 当前窗口底 - lift（面板 / 菜单形态重排）；探头形态脚底固定
+    // 在窗口底上方 8s。
+    let feet_y = match cur_y {
+        Some(y) => {
+            if prev == HudMode::Panel || prev == HudMode::Menu {
+                y + hud_sizes(prev, s).1 - *HUD_PANEL_LIFT.lock().unwrap()
+            } else {
+                y + ph - 8.0 * s
+            }
+        }
+        None => my + 20.0 + ph - 8.0 * s,
+    };
+    let x = if dock_left { mx } else { mx + mw - width };
+    // 窗口底对齐探头窗口底（feet_y + 8s），被上缘截断时窗口下压、lift 变大。
+    let y = (feet_y + 8.0 * s - height).clamp(my + 12.0, (my + mh - height - 12.0).max(my + 12.0));
+    let lift = ((y + height) - feet_y).max(5.0 * s);
+    (x, y, dock_left, lift)
 }
 
 /// 把 HUD 窗口调整为指定形态并返回停靠信息。`restore` 表示使用设置里的
@@ -298,7 +391,13 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
                 None => true,
             };
             let x = if dock_left { mx } else { mx + mw - width };
-            let top = if restore { hud.y.or(cur_y) } else { cur_y }.unwrap_or(my + 20.0);
+            let mut top = if restore { hud.y.or(cur_y) } else { cur_y }.unwrap_or(my + 20.0);
+            if !restore && (prev == HudMode::Panel || prev == HudMode::Menu) {
+                // 从面板 / 菜单收回探头：按 lift 反推脚底，窗口底对齐原来的
+                // 探头窗口底，Handy 原位钻回边缘、不挪动。
+                let feet_y = top + hud_sizes(prev, s).1 - *HUD_PANEL_LIFT.lock().unwrap();
+                top = feet_y + 8.0 * s - height;
+            }
             let y = top.clamp(my + 12.0, (my + mh - height - 12.0).max(my + 12.0));
             HUD_ANCHOR.lock().unwrap().take();
             HUD_PANEL_SIDE_RIGHT.store(!dock_left, Ordering::SeqCst);
@@ -307,17 +406,12 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
         HudMode::Panel => {
             let snap = settings::load_from_disk(app).hud.snap_to_edge;
             if snap {
-                // 贴边面板：停靠在探头一侧的屏幕边缘，Handy 站回窗口底部。
-                let dock_left = match cur_x {
-                    Some(a) => a + width / 2.0 < mx + mw / 2.0,
-                    None => true,
-                };
-                let x = if dock_left { mx } else { mx + mw - width };
-                let top = cur_y.unwrap_or(my + 20.0);
-                let y = top.clamp(my + 12.0, (my + mh - height - 12.0).max(my + 12.0));
+                // 贴边面板：Handy 保持探头位姿原地不动，窗口朝桌面内侧扩开。
+                let (x, y, dock_left, lift) =
+                    peek_docked_layout(&m, s, width, height, prev, cur_x, cur_y);
                 HUD_PANEL_SIDE_RIGHT.store(!dock_left, Ordering::SeqCst);
-                *HUD_PANEL_LIFT.lock().unwrap() = 5.0 * s;
-                (x, y, Some(HudPlacement { side: side_str(dock_left), lift: 5.0 * s }))
+                *HUD_PANEL_LIFT.lock().unwrap() = lift;
+                (x, y, Some(HudPlacement { side: side_str(dock_left), lift }))
             } else {
                 // 自由面板：Handy 原地站好，面板朝桌面内侧展开。
                 let (fx, fy) = match HUD_ANCHOR.lock().unwrap().as_ref() {
@@ -336,14 +430,12 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
         }
         HudMode::Menu => {
             if HUD_MENU_FROM_PEEK.load(Ordering::SeqCst) {
-                // 从探头打开：窗口直接 dock 到探头一侧，Handy 跳回屏内站好。
-                let dock_left = !HUD_PANEL_SIDE_RIGHT.load(Ordering::SeqCst);
-                let x = if dock_left { mx } else { mx + mw - width };
-                let top = cur_y.unwrap_or(my + 20.0);
-                let y = top.clamp(my + 12.0, (my + mh - height - 12.0).max(my + 12.0));
+                // 从探头打开：Handy 保持探头位姿原地不动，菜单卡片朝桌面内侧展开。
+                let (x, y, dock_left, lift) =
+                    peek_docked_layout(&m, s, width, height, prev, cur_x, cur_y);
                 HUD_PANEL_SIDE_RIGHT.store(!dock_left, Ordering::SeqCst);
-                *HUD_PANEL_LIFT.lock().unwrap() = 5.0 * s;
-                (x, y, Some(HudPlacement { side: side_str(dock_left), lift: 5.0 * s }))
+                *HUD_PANEL_LIFT.lock().unwrap() = lift;
+                (x, y, Some(HudPlacement { side: side_str(dock_left), lift }))
             } else {
                 // 从自由形态打开：Handy 原地不动，菜单卡片朝桌面内侧展开。
                 let (fx, fy) = match (cur_x, cur_y) {
@@ -1227,6 +1319,8 @@ pub fn run() {
             read_acta_data,
             write_todo_check,
             write_note,
+            read_history,
+            restore_history,
             refresh_data,
             show_window,
             quit_app,

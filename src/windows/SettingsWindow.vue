@@ -5,13 +5,23 @@ import { countsFor } from "../lib/view";
 import { shortDate } from "../lib/format";
 import { t } from "../lib/i18n";
 import { initStore, persistSettings, refreshActaData, store } from "../lib/store";
-import { onHudAnim, pickDataFolder, refreshData, setHudScale, showWindow } from "../lib/api";
+import {
+  onHudAnim,
+  onDataChanged,
+  pickDataFolder,
+  readHistory,
+  refreshData,
+  restoreHistory,
+  setHudScale,
+  showWindow,
+} from "../lib/api";
 import AppIcon from "../components/AppIcon.vue";
 import LogoWordmark from "../components/LogoWordmark.vue";
 import SelectMenu from "../components/SelectMenu.vue";
 import type { IconName } from "../types/icons";
+import type { HistoryEntry } from "../types/history";
 
-const APP_VERSION = "0.6.0";
+const APP_VERSION = "0.7.0";
 
 type SectionId = "data" | "todoWidget" | "notesWidget" | "hud" | "general" | "about";
 const active = ref<SectionId>("data");
@@ -100,6 +110,50 @@ async function reload(): Promise<void> {
   await refreshActaData();
 }
 
+// --- 修改历史 ----------------------------------------------------------------
+// 勾选与编辑都会留档；在这里回看每次写入，必要时恢复到改动前的模样。
+
+const history = ref<HistoryEntry[]>([]);
+const restoringId = ref<string | null>(null);
+const restoreError = ref("");
+
+async function loadHistory(): Promise<void> {
+  const folder = store.settings.dataFolder;
+  if (!folder) {
+    history.value = [];
+    return;
+  }
+  try {
+    history.value = await readHistory(folder);
+  } catch {
+    history.value = [];
+  }
+}
+
+async function restore(entry: HistoryEntry): Promise<void> {
+  if (restoringId.value || !store.settings.dataFolder) return;
+  restoringId.value = entry.id;
+  restoreError.value = "";
+  try {
+    await restoreHistory(store.settings.dataFolder, entry.id);
+    await loadHistory();
+  } catch (error) {
+    restoreError.value = `${t("historyRestoreFail")}：${String(error)}`;
+  } finally {
+    restoringId.value = null;
+  }
+}
+
+function historyTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${shortDate(iso)} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function historyIcon(kind: HistoryEntry["kind"]): IconName {
+  return kind.startsWith("todo") ? "todo" : "note";
+}
+
 async function minimize(): Promise<void> {
   await win.minimize();
 }
@@ -123,6 +177,9 @@ onMounted(async () => {
     hudBusy.value = payload.phase !== "end";
   });
   await initStore();
+  await loadHistory();
+  // 小组件里的写入也会留档：数据一变就同步历史列表。
+  void onDataChanged(() => void loadHistory());
   await new Promise((r) => setTimeout(r, 60));
   await showWindow("main");
 });
@@ -210,6 +267,33 @@ onBeforeUnmount(() => {
           <p v-else-if="store.settings.dataFolder && store.data" class="status ok">
             {{ t("itemCounts")(counts.notes, counts.todos) }}
           </p>
+
+          <!-- 修改历史 -->
+          <div class="history">
+            <div class="history-head">
+              <b>{{ t("historyTitle") }}</b>
+              <small>{{ t("historyDesc") }}</small>
+            </div>
+            <p v-if="restoreError" class="status error">{{ restoreError }}</p>
+            <div class="group history-list">
+              <p v-if="history.length === 0" class="history-empty">{{ t("historyEmpty") }}</p>
+              <div v-for="entry in history" :key="entry.id" class="history-row">
+                <span class="history-icon"><AppIcon :name="historyIcon(entry.kind)" :size="13" /></span>
+                <span class="history-copy">
+                  <b>{{ t("historySummary")(entry.kind, entry.title, entry.completed) }}</b>
+                  <small>{{ historyTime(entry.time) }}</small>
+                </span>
+                <button
+                  v-if="entry.before"
+                  class="settings-button secondary"
+                  :disabled="restoringId !== null"
+                  @click="restore(entry)"
+                >
+                  {{ t("historyRestore") }}
+                </button>
+              </div>
+            </div>
+          </div>
         </section>
 
         <!-- 待办小组件 -->
@@ -489,6 +573,20 @@ onBeforeUnmount(() => {
 .status.ok { color: var(--sage); background: var(--sage-2); }
 .status.error { color: var(--priority-high-ink); background: var(--priority-high-bg); }
 .status.warn { color: color-mix(in srgb, var(--amber) 74%, var(--ink)); background: color-mix(in srgb, var(--amber-soft) 58%, var(--white)); }
+
+/* --- 修改历史 --- */
+.history { margin-top: 22px; }
+.history-head { margin: 0 2px 10px; display: flex; align-items: baseline; gap: 10px; }
+.history-head b { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.history-head small { color: var(--faint); font-size: 11px; }
+.history-list { max-height: 268px; overflow: hidden auto; }
+.history-empty { margin: 0; padding: 18px; color: var(--faint); font-size: 12px; text-align: center; }
+.history-row { padding: 10px 15px; display: flex; align-items: center; gap: 12px; }
+.history-row + .history-row { border-top: 1px solid var(--line); }
+.history-icon { flex: 0 0 auto; display: inline-flex; color: var(--faint); }
+.history-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.history-copy b { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-copy small { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
 
 .about-mark {
   margin-bottom: 18px;

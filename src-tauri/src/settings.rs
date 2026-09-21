@@ -152,16 +152,22 @@ impl HandySettings {
     }
 }
 
-fn settings_path(app: &AppHandle) -> Option<PathBuf> {
-    // Windows 便携版：设置与 exe 同目录，换机器拷走整个文件夹即可带走全部数据。
+/// 应用数据目录：Windows 便携版为 exe 同目录（数据随 exe 走），其余平台为
+/// 应用配置目录。设置与修改历史都放在这里。
+pub fn data_dir(app: &AppHandle) -> Option<PathBuf> {
     if cfg!(windows) {
         if let Ok(dir) = app.path().executable_dir() {
             if !dir.as_os_str().is_empty() {
-                return Some(dir.join(SETTINGS_FILE));
+                return Some(dir.to_path_buf());
             }
         }
     }
-    app.path().app_config_dir().ok().map(|dir| dir.join(SETTINGS_FILE))
+    app.path().app_config_dir().ok()
+}
+
+fn settings_path(app: &AppHandle) -> Option<PathBuf> {
+    // Windows 便携版：设置与 exe 同目录，换机器拷走整个文件夹即可带走全部数据。
+    data_dir(app).map(|dir| dir.join(SETTINGS_FILE))
 }
 
 /// 0.3 及更早版本在 Windows 上把设置存在 %APPDATA%\<identifier> 下；首次启动

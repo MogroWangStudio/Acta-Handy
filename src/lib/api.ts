@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ActaData, ActaNote, ActaTodo } from "../types/acta";
 import type { HandySettings } from "../types/settings";
+import type { HistoryEntry } from "../types/history";
 
 export function readActaData(folder: string): Promise<ActaData> {
   return invoke<ActaData>("read_acta_data", { folder });
@@ -29,6 +30,16 @@ export interface NotePatch {
 /** 新建 / 编辑笔记，写回 Acta 数据文件夹并返回落盘后的笔记。 */
 export function writeNote(folder: string, patch: NotePatch): Promise<ActaNote> {
   return invoke<ActaNote>("write_note", { folder, patch });
+}
+
+/** 某个数据文件夹最近的修改历史（新→旧），在设置窗口的「数据源」页回溯。 */
+export function readHistory(folder: string): Promise<HistoryEntry[]> {
+  return invoke<HistoryEntry[]>("read_history", { folder });
+}
+
+/** 把一条历史恢复回写入前的模样；恢复本身也会记入历史。 */
+export function restoreHistory(folder: string, entryId: string): Promise<void> {
+  return invoke("restore_history", { folder, entryId });
 }
 
 export function loadSettings(): Promise<HandySettings> {
