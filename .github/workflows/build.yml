@@ -3,12 +3,18 @@ name: Build
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
     tags:
       - "v*"
 
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
+
+# 每次推送到 main 都会自动构建两平台产物（CI）：构建结果以 artifact 形式
+# 上传，名字带 run number 保证唯一（upload-artifact v4 不允许同名重复）。
+# 推送 v* 标签时走同一条流水线，产物保持正式命名并附加到 GitHub Release。
 
 jobs:
   windows-portable:
@@ -32,20 +38,29 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - name: Install dependencies
         run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
       - name: Build portable exe
         run: npm run windows:portable
       - name: Collect portable exe
+        id: collect
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           $exe = Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release" -Filter *.exe |
             Sort-Object Length -Descending | Select-Object -First 1
           if (-not $exe) { throw "No portable exe found in release output." }
-          Copy-Item $exe.FullName "dist/ActaHandy-${{ steps.ver.outputs.version }}-windows-x64-portable.exe"
+          # CI 构建的产物名带 run number；标签发布保持正式命名。
+          $suffix = if ($env:GITHUB_REF_TYPE -eq "tag") { "" } else { "-ci-$($env:GITHUB_RUN_NUMBER)" }
+          $name = "ActaHandy-$($env:VERSION)-windows-x64-portable$suffix"
+          Copy-Item $exe.FullName "dist/$name.exe"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "name=$name"
       - uses: actions/upload-artifact@v4
         with:
-          name: ActaHandy-${{ steps.ver.outputs.version }}-windows-x64-portable
-          path: dist/ActaHandy-*-windows-x64-portable.exe
+          name: ${{ steps.collect.outputs.name }}
+          path: dist/*.exe
           if-no-files-found: error
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -74,9 +89,14 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - name: Install dependencies
         run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
       - name: Build dmg
         run: npm run macos:build
       - name: Collect dmg
+        id: collect
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         shell: bash
         run: |
           mkdir -p dist
@@ -85,11 +105,18 @@ jobs:
             echo "No dmg found in bundle output." >&2
             exit 1
           fi
-          cp "$dmg" "dist/ActaHandy-${{ steps.ver.outputs.version }}-macos-arm64.dmg"
+          # CI 构建的产物名带 run number；标签发布保持正式命名。
+          suffix=""
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            suffix="-ci-$GITHUB_RUN_NUMBER"
+          fi
+          name="ActaHandy-${VERSION}-macos-arm64${suffix}"
+          cp "$dmg" "dist/$name.dmg"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: ActaHandy-${{ steps.ver.outputs.version }}-macos-arm64
-          path: dist/ActaHandy-*-macos-arm64.dmg
+          name: ${{ steps.collect.outputs.name }}
+          path: dist/*.dmg
           if-no-files-found: error
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')

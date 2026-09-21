@@ -57,10 +57,12 @@ VITE_MOCK_TAURI=1 npx vite --port 5201
 
 ## 构建
 
-GitHub Actions 会在推送 `v*` 标签时自动构建：
+GitHub Actions 自动构建双平台产物：
 
 - **Windows x64 便携版**（单个 exe，免安装）
 - **macOS Apple Silicon**（arm64 dmg）
+
+每次推送提交到 `main` 都会自动构建一轮，产物以 artifact 形式挂在对应的 workflow run 上（名字带 run number，便于区分每次构建）；构建前会先跑 `vue-tsc` 类型检查。推送 `v*` 标签时走同一条流水线，产物保持正式命名并自动附加到对应的 GitHub Release；也可以在 Actions 页面手动触发。
 
 ## 许可
 
