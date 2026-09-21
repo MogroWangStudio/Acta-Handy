@@ -90,6 +90,11 @@ export function commitHudScale(): Promise<void> {
   return invoke("commit_hud_scale");
 }
 
+/** 缩放滑块拖动中的实时值（0.2–1.5）：HUD 窗口用它同步预览大小。 */
+export function onHudScale(cb: (scale: number) => void): Promise<void> {
+  return listen<number>("hud-scale", (e) => cb(e.payload)).then(() => undefined);
+}
+
 /** 右键菜单里的「关闭 Handy」；重新开启后以吸附 / 自由形态回来。 */
 export function setHudEnabled(enabled: boolean): Promise<void> {
   return invoke("set_hud_enabled", { enabled });

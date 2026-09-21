@@ -26,39 +26,45 @@ const due = computed(() => {
 const dueText = computed(() => due.value.split("|")[0]);
 const dueClass = computed(() => due.value.split("|")[1] ?? "");
 const subtasks = computed(() => taskProgress(props.todo));
+/** 元信息行：标题独占首行后，日期 / 优先级 / 子任务进度沉到第二行。 */
+const hasMeta = computed(
+  () => expandable.value || Boolean(dueText.value) || props.todo.priority === "high",
+);
 </script>
 
 <template>
   <!-- 整行都是展开的点击目标；勾选框与子任务列表自行拦截点击。 -->
   <li class="todo-row" :class="{ done, expandable }" @click="expandable && (expanded = !expanded)">
-    <button
-      type="button"
-      class="todo-check"
-      :class="{ on: done }"
-      :aria-label="done ? t('markUndone') : t('markDone')"
-      @click.stop="emit('check', !done)"
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M5 12.5l4.5 4.5L19 7.5" />
-      </svg>
-    </button>
-    <span class="todo-main">
-      <i
-        v-if="folder"
-        class="folder-dot todo-folder-dot"
-        :style="{ color: folderColor(folder) }"
-        :title="folderName(folder)"
-      />
-      <span class="todo-title">{{ todo.title || t("untitledTodo") }}</span>
+    <div class="todo-line">
+      <button
+        type="button"
+        class="todo-check"
+        :class="{ on: done }"
+        :aria-label="done ? t('markUndone') : t('markDone')"
+        @click.stop="emit('check', !done)"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M5 12.5l4.5 4.5L19 7.5" />
+        </svg>
+      </button>
+      <span class="todo-main">
+        <i
+          v-if="folder"
+          class="folder-dot todo-folder-dot"
+          :style="{ color: folderColor(folder) }"
+          :title="folderName(folder)"
+        />
+        <span class="todo-title">{{ todo.title || t("untitledTodo") }}</span>
+      </span>
+    </div>
+    <div v-if="hasMeta" class="todo-meta">
       <span v-if="expandable && !expanded" class="todo-sub">{{ t("subtaskOf")(subtasks.done, subtasks.total) }}</span>
-    </span>
-    <span class="todo-side">
       <PriorityPill v-if="todo.priority === 'high'" :priority="todo.priority" />
       <span v-if="dueText" class="todo-due" :class="dueClass">{{ dueText }}</span>
       <svg v-if="expandable" class="todo-chevron" :class="{ open: expanded }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M6 9.5l6 6 6-6" />
       </svg>
-    </span>
+    </div>
 
     <ul v-if="expanded" class="task-list" @click.stop>
       <li v-for="task in todo.tasks" :key="task.id" class="task-row" :class="{ done: task.done }">
@@ -81,12 +87,10 @@ const subtasks = computed(() => taskProgress(props.todo));
 
 <style scoped>
 .todo-row {
-  min-height: 40px;
-  display: grid;
-  grid-template-columns: 19px minmax(0, 1fr) auto;
-  gap: 9px;
-  align-items: center;
-  padding: 5px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px 0;
   border-bottom: 1px solid rgba(47, 52, 45, .07);
   border-radius: 8px;
   animation: rowIn .4s var(--ease-out) both;
@@ -99,6 +103,8 @@ html[data-handy-theme="dark"] .todo-row { border-bottom-color: rgba(255, 255, 25
 .todo-check {
   width: 18px;
   height: 18px;
+  margin-top: 1px;
+  flex: 0 0 auto;
   padding: 0;
   border: 1.5px solid color-mix(in srgb, var(--muted) 55%, transparent);
   border-radius: 6px;
@@ -115,31 +121,42 @@ html[data-handy-theme="dark"] .todo-row { border-bottom-color: rgba(255, 255, 25
 .todo-check.on svg { opacity: 1; transform: scale(1) rotate(0); }
 html[data-handy-theme="dark"] .todo-check.on { color: var(--sidebar); }
 
-.todo-main { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
-.todo-folder-dot { width: 6px; height: 6px; align-self: center; }
+/* 标题独占首行（最多两行），日期 / 优先级 / 子任务进度沉到第二行——窄卡片
+   里右侧元信息列挤掉标题的问题不再发生。 */
+.todo-line { display: flex; align-items: flex-start; gap: 9px; }
+.todo-main { min-width: 0; flex: 1; display: flex; align-items: baseline; gap: 8px; }
+.todo-folder-dot { width: 6px; height: 6px; flex: 0 0 auto; }
 .todo-title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   font-size: 12px;
   font-weight: 600;
   line-height: 1.4;
   transition: color .2s, opacity .2s;
 }
-.todo-sub { flex: 0 0 auto; color: var(--faint); font-size: 9px; letter-spacing: .02em; }
 .todo-row.done .todo-title { color: var(--faint); text-decoration: line-through; }
 
-.todo-side { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.todo-meta {
+  padding-left: 27px; /* 与标题左缘对齐：勾选框 18px + 间距 9px */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.todo-sub { color: var(--faint); font-size: 9px; letter-spacing: .02em; }
+
 .todo-due { white-space: nowrap; color: var(--faint); font-size: 9.5px; letter-spacing: .02em; }
 .todo-due.soon { color: var(--amber); }
 .todo-due.overdue { color: var(--priority-high-ink); font-weight: 700; }
-.todo-chevron { width: 12px; height: 12px; color: var(--faint); flex: 0 0 auto; transition: transform .22s var(--ease-out); }
+.todo-chevron { margin-left: auto; width: 12px; height: 12px; color: var(--faint); flex: 0 0 auto; transition: transform .22s var(--ease-out); }
 .todo-chevron.open { transform: rotate(180deg); }
 
 .task-list {
-  grid-column: 1 / -1;
   margin: 2px 0 4px;
-  padding: 0 0 2px 28px;
+  padding: 0 0 2px 27px;
   list-style: none;
   display: flex;
   flex-direction: column;

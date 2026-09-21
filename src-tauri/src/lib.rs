@@ -655,6 +655,11 @@ fn set_hud_scale(app: AppHandle, scale: f64) -> Option<HudPlacement> {
     let new_raw = (scale.clamp(0.2, 1.5) * 1000.0).round() as u32;
     let old_raw = HUD_LIVE_SCALE.load(Ordering::SeqCst);
     HUD_LIVE_SCALE.store(new_raw, Ordering::SeqCst);
+    // 实时广播给 HUD 窗口：窗口框架重排了，CSS 的 Handy 也要跟上同一档
+    // 缩放，否则拖动滑块时看到的是「窗口变大、小人没变」的错位预览。
+    if old_raw != new_raw {
+        let _ = app.emit("hud-scale", new_raw as f64 / 1000.0);
+    }
     if old_raw == new_raw || HUD_ANIMATING.load(Ordering::SeqCst) {
         return None;
     }
@@ -716,6 +721,7 @@ fn commit_hud_scale(app: AppHandle) {
     s.hud.scale = raw as f64 / 1000.0;
     HUD_LAST_SCALE.store(raw, Ordering::SeqCst);
     let _ = settings::save_to_disk(&app, &s);
+    let _ = app.emit("hud-scale", raw as f64 / 1000.0);
     let _ = app.emit("settings-changed", &s);
 }
 
@@ -1139,6 +1145,10 @@ fn apply_main_window(app: &AppHandle, s: &HandySettings) {
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
+    // 最大化 / 全屏时不打扰当前窗口状态：此时 set_size 会把窗口拽出最大化。
+    if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
+        return;
+    }
     let width = s.window.width.max(860.0);
     let height = s.window.height.max(560.0);
     let _ = window.set_size(LogicalSize::new(width, height));
@@ -1274,6 +1284,12 @@ fn persist_geometry(app: &AppHandle, label: &str) {
     let height = size.height as f64 / scale;
     match label {
         "main" => {
+            // 最大化 / 全屏时的窗口尺寸不代表用户偏好的还原尺寸：不落盘。
+            // 否则一次最大化就会把记忆尺寸放大到满屏，之后每次应用设置都会
+            // 把窗口撑到那么大。
+            if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
+                return;
+            }
             s.window.x = x;
             s.window.y = y;
             s.window.width = width;

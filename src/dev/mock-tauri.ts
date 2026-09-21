@@ -264,6 +264,7 @@ function invoke(cmd: string, args: Record<string, unknown>): unknown {
       fire("hud-menu", { side: "right", lift: 5 });
       return null;
     case "set_hud_scale":
+      fire("hud-scale", args.scale);
       return Promise.resolve(null);
     case "commit_hud_scale":
     case "set_hud_enabled":
@@ -301,7 +302,7 @@ export function installMock(): void {
       const id = nextCallbackId++;
       callbacks.set(id, cb);
       window.addEventListener("mock-event", ((e: CustomEvent) => {
-        if (["settings-changed", "acta-data-changed", "hud-menu", "hud-anim", "hud-gaze", "hud-wake"].includes(e.detail.event)) {
+        if (["settings-changed", "acta-data-changed", "hud-menu", "hud-anim", "hud-gaze", "hud-wake", "hud-scale"].includes(e.detail.event)) {
           cb({ event: e.detail.event, id, payload: e.detail.payload });
         }
       }) as EventListener);

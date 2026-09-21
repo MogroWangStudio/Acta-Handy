@@ -233,6 +233,10 @@ pub fn save_settings(app: AppHandle, settings: HandySettings) -> Result<HandySet
     // 窗口几何（位置与大小）由后端在拖动后防抖落盘，前端持有的快照可能
     // 过期：保存任何设置时都以磁盘上的几何为准，窗口尺寸不再被带回旧值。
     let disk = load_from_disk(&app);
+    clean.window.x = disk.window.x;
+    clean.window.y = disk.window.y;
+    clean.window.width = disk.window.width;
+    clean.window.height = disk.window.height;
     clean.todo_widget.x = disk.todo_widget.x;
     clean.todo_widget.y = disk.todo_widget.y;
     clean.todo_widget.width = disk.todo_widget.width;

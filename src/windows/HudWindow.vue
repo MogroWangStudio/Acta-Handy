@@ -17,6 +17,7 @@ import {
   onHudAnim,
   onHudGaze,
   onHudMenu,
+  onHudScale,
   onHudWake,
   popupHudMenu,
   setHudCursorWatch,
@@ -47,6 +48,9 @@ onMounted(async () => {
   void onHudAnim(onAnim);
   void onHudGaze(onGaze);
   void onHudMenu(onMenu);
+  void onHudScale((scale) => {
+    liveScalePreview.value = scale;
+  });
   void setHudEyeWatch(true);
   unlistenFocus = await win.onFocusChanged((focused) => {
     // 失焦即收起菜单，与系统菜单的点外关闭一致。
@@ -58,7 +62,10 @@ onMounted(async () => {
 });
 
 const cfg = computed(() => store.settings.hud);
-const s = computed(() => cfg.value.scale);
+// 缩放滑块拖动中的实时值优先于设置文件：窗口框架由后端实时重排，CSS 的
+// 小人要跟同一档缩放，预览才跟手；松手落盘后以 settings-changed 为准。
+const liveScalePreview = ref<number | null>(null);
+const s = computed(() => liveScalePreview.value ?? cfg.value.scale);
 const shape = ref<"free" | "peek" | "panel" | "menu">("free");
 const prevShape = ref<"free" | "peek">("free");
 const edge = ref<"left" | "right">("right");
