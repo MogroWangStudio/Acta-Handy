@@ -63,12 +63,19 @@ static HUD_PANEL_SIDE_RIGHT: AtomicBool = AtomicBool::new(true);
 /// 面板 / 菜单形态下 Handy 脚底离窗口底部的逻辑距离：面板向上展开被屏幕
 /// 上缘截断时变大，Handy 的屏幕位置因此保持不动。
 static HUD_PANEL_LIFT: Mutex<f64> = Mutex::new(5.0);
-/// 自由形态打开面板 / 菜单时的 Handy 窗口位置：面板被拖动或重排时以它为锚。
+/// 自由形态打开面板 / 菜单时的 Handy 窗口位置：收起时站回这里。存的是打开
+/// 前的精确逻辑坐标——收起若从「读回窗口坐标（物理整数）→ 反推 → 再写入」
+/// 走，每一轮开合都会因取整往返净移约 1 物理像素并累积；用锚点恢复则恰好
+/// 还原为开合前的同一物理像素，零位移。面板被拖动或重排时由几何持久化更新。
 static HUD_ANCHOR: Mutex<Option<(f64, f64)>> = Mutex::new(None);
+/// 贴边面板 / 菜单对应的探头锚点：收起时 Handy 原位钻回边缘的窗口位姿，
+/// 语义同上（精确、不取整往返）。
+static HUD_PEEK_ANCHOR: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 /// 贴边过渡动画播放中：期间设置应用与几何持久化全部让路。
 static HUD_ANIMATING: AtomicBool = AtomicBool::new(false);
-/// 菜单是从探头形态打开的：重排（拖缩放滑块）时保持 dock 式布局。
-static HUD_MENU_FROM_PEEK: AtomicBool = AtomicBool::new(false);
+/// 面板 / 菜单是从探头形态打开的：布局与收起落点都按探头一侧处理（重排时
+/// 保持不变）。
+static HUD_PANEL_FROM_PEEK: AtomicBool = AtomicBool::new(false);
 /// 滑块拖动中的实时缩放（×1000；0 表示无实时值，读设置文件）。
 pub(crate) static HUD_LIVE_SCALE: AtomicU32 = AtomicU32::new(0);
 /// 最近一次生效的缩放（×1000）：滑块连续拖动时用来反推旧窗口几何。
@@ -281,7 +288,7 @@ fn free_floating_layout(
 
 /// 贴边探头打开面板 / 菜单：Handy 保持探头位姿原地不动，窗口朝桌面内侧
 /// 扩开、底部对齐探头窗口底部（脚底屏幕位置不变），被屏幕上缘截断时以
-/// lift 抬高窗口兜底。返回窗口位置、停靠边（Handy 在左）与 lift。
+/// lift 抬高窗口兜底。返回窗口位置、停靠边（Handy 在左）、lift 与脚底 y。
 #[allow(clippy::too_many_arguments)]
 fn peek_docked_layout(
     m: &tauri::Monitor,
@@ -291,7 +298,7 @@ fn peek_docked_layout(
     prev: HudMode,
     cur_x: Option<f64>,
     cur_y: Option<f64>,
-) -> (f64, f64, bool, f64) {
+) -> (f64, f64, bool, f64, f64) {
     let (mx, my, mw, mh) = monitor_rect(m);
     let (pw, ph) = hud_sizes(HudMode::Peek, s);
     // 探头与面板 / 菜单都 dock 在屏幕边缘（x 只取屏幕左缘或右缘 - 窗口宽），
@@ -316,7 +323,16 @@ fn peek_docked_layout(
     // 窗口底对齐探头窗口底（feet_y + 8s），被上缘截断时窗口下压、lift 变大。
     let y = (feet_y + 8.0 * s - height).clamp(my + 12.0, (my + mh - height - 12.0).max(my + 12.0));
     let lift = ((y + height) - feet_y).max(5.0 * s);
-    (x, y, dock_left, lift)
+    (x, y, dock_left, lift, feet_y)
+}
+
+/// 从探头形态打开面板 / 菜单时，记下收起后 Handy 应钻回的探头窗口位姿
+/// （由脚底反推的精确逻辑坐标，见 HUD_PEEK_ANCHOR）。
+fn store_peek_anchor(m: &tauri::Monitor, s: f64, dock_left: bool, feet_y: f64) {
+    let (mx, _my, mw, _mh) = monitor_rect(m);
+    let (pw, ph) = hud_sizes(HudMode::Peek, s);
+    let peek_x = if dock_left { mx } else { mx + mw - pw };
+    *HUD_PEEK_ANCHOR.lock().unwrap() = Some((peek_x, feet_y + 8.0 * s - ph));
 }
 
 /// 把 HUD 窗口调整为指定形态并返回停靠信息。`restore` 表示使用设置里的
@@ -348,6 +364,10 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
     let (mx, my, mw, mh) = monitor_rect(&m);
     let prev = hud_mode();
     let default = default_position(app, width, 0.0);
+    // 记录面板 / 菜单的来源形态（从面板重排面板时保持原值）。
+    if prev == HudMode::Free || prev == HudMode::Peek {
+        HUD_PANEL_FROM_PEEK.store(prev == HudMode::Peek, Ordering::SeqCst);
+    }
 
     let (x, y, placement) = match mode {
         HudMode::Free => {
@@ -358,21 +378,28 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
                     _ => (default.x, default.y),
                 }
             } else if prev == HudMode::Panel || prev == HudMode::Menu {
-                // 面板 / 菜单收起：按停靠信息反推自由位姿，Handy 原地站好。
-                let (pw, ph) = hud_sizes(prev, s);
+                // 面板 / 菜单收起：优先站回开面板时记下的精确自由位姿
+                // （避免「读回 → 反推 → 再写入」的取整往返漂移）；锚点缺失
+                // 时按停靠信息反推兜底。
                 let (fw, fh) = hud_sizes(HudMode::Free, s);
-                let lift = *HUD_PANEL_LIFT.lock().unwrap();
-                match (cur_x, cur_y) {
-                    (Some(px), Some(py)) => {
-                        let feet_y = py + ph - lift;
-                        let fx = if HUD_PANEL_SIDE_RIGHT.load(Ordering::SeqCst) {
-                            px + pw - fw
-                        } else {
-                            px
-                        };
-                        (fx, feet_y - fh + 5.0 * s)
+                match HUD_ANCHOR.lock().unwrap().take() {
+                    Some((fx, fy)) => (fx, fy),
+                    None => {
+                        let (pw, ph) = hud_sizes(prev, s);
+                        let lift = *HUD_PANEL_LIFT.lock().unwrap();
+                        match (cur_x, cur_y) {
+                            (Some(px), Some(py)) => {
+                                let feet_y = py + ph - lift;
+                                let fx = if HUD_PANEL_SIDE_RIGHT.load(Ordering::SeqCst) {
+                                    px + pw - fw
+                                } else {
+                                    px
+                                };
+                                (fx, feet_y - fh + 5.0 * s)
+                            }
+                            _ => (default.x, default.y),
+                        }
                     }
-                    _ => (default.x, default.y),
                 }
             } else {
                 match (cur_x, cur_y) {
@@ -381,6 +408,7 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
                 }
             };
             HUD_ANCHOR.lock().unwrap().take();
+            HUD_PEEK_ANCHOR.lock().unwrap().take();
             (x, y, None)
         }
         HudMode::Peek => {
@@ -390,16 +418,25 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
                 Some(a) => a + width / 2.0 < mx + mw / 2.0,
                 None => true,
             };
-            let x = if dock_left { mx } else { mx + mw - width };
+            let mut x = if dock_left { mx } else { mx + mw - width };
             let mut top = if restore { hud.y.or(cur_y) } else { cur_y }.unwrap_or(my + 20.0);
             if !restore && (prev == HudMode::Panel || prev == HudMode::Menu) {
-                // 从面板 / 菜单收回探头：按 lift 反推脚底，窗口底对齐原来的
-                // 探头窗口底，Handy 原位钻回边缘、不挪动。
-                let feet_y = top + hud_sizes(prev, s).1 - *HUD_PANEL_LIFT.lock().unwrap();
-                top = feet_y + 8.0 * s - height;
+                // 从面板 / 菜单收回探头：优先用记下的精确探头位姿，Handy
+                // 原位钻回边缘；锚点缺失时按 lift 反推兜底。
+                match HUD_PEEK_ANCHOR.lock().unwrap().take() {
+                    Some((ax, ay)) => {
+                        x = ax;
+                        top = ay;
+                    }
+                    None => {
+                        let feet_y = top + hud_sizes(prev, s).1 - *HUD_PANEL_LIFT.lock().unwrap();
+                        top = feet_y + 8.0 * s - height;
+                    }
+                }
             }
             let y = top.clamp(my + 12.0, (my + mh - height - 12.0).max(my + 12.0));
             HUD_ANCHOR.lock().unwrap().take();
+            HUD_PEEK_ANCHOR.lock().unwrap().take();
             HUD_PANEL_SIDE_RIGHT.store(!dock_left, Ordering::SeqCst);
             (x, y, Some(HudPlacement { side: side_str(dock_left), lift: 8.0 * s }))
         }
@@ -407,10 +444,13 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
             let snap = settings::load_from_disk(app).hud.snap_to_edge;
             if snap {
                 // 贴边面板：Handy 保持探头位姿原地不动，窗口朝桌面内侧扩开。
-                let (x, y, dock_left, lift) =
+                let (x, y, dock_left, lift, feet_y) =
                     peek_docked_layout(&m, s, width, height, prev, cur_x, cur_y);
                 HUD_PANEL_SIDE_RIGHT.store(!dock_left, Ordering::SeqCst);
                 *HUD_PANEL_LIFT.lock().unwrap() = lift;
+                if prev == HudMode::Peek {
+                    store_peek_anchor(&m, s, dock_left, feet_y);
+                }
                 (x, y, Some(HudPlacement { side: side_str(dock_left), lift }))
             } else {
                 // 自由面板：Handy 原地站好，面板朝桌面内侧展开。
@@ -429,12 +469,15 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
             }
         }
         HudMode::Menu => {
-            if HUD_MENU_FROM_PEEK.load(Ordering::SeqCst) {
+            if HUD_PANEL_FROM_PEEK.load(Ordering::SeqCst) {
                 // 从探头打开：Handy 保持探头位姿原地不动，菜单卡片朝桌面内侧展开。
-                let (x, y, dock_left, lift) =
+                let (x, y, dock_left, lift, feet_y) =
                     peek_docked_layout(&m, s, width, height, prev, cur_x, cur_y);
                 HUD_PANEL_SIDE_RIGHT.store(!dock_left, Ordering::SeqCst);
                 *HUD_PANEL_LIFT.lock().unwrap() = lift;
+                if prev == HudMode::Peek {
+                    store_peek_anchor(&m, s, dock_left, feet_y);
+                }
                 (x, y, Some(HudPlacement { side: side_str(dock_left), lift }))
             } else {
                 // 从自由形态打开：Handy 原地不动，菜单卡片朝桌面内侧展开。
@@ -728,7 +771,6 @@ fn popup_hud_menu(app: AppHandle) {
     if hud_mode() == HudMode::Menu {
         return;
     }
-    HUD_MENU_FROM_PEEK.store(hud_mode() == HudMode::Peek, Ordering::SeqCst);
     let Some(placement) = apply_hud(&app, HudMode::Menu, false) else {
         return;
     };
@@ -995,6 +1037,7 @@ pub fn apply_windows(app: &AppHandle, s: &HandySettings) {
     if !s.hud.enabled {
         HUD_WATCH.store(false, Ordering::SeqCst);
         HUD_ANCHOR.lock().unwrap().take();
+        HUD_PEEK_ANCHOR.lock().unwrap().take();
         // 记下目标形态，重新启用时从这里继续，不触发贴边动画。
         HUD_MODE.store(if s.hud.snap_to_edge { 1 } else { 0 }, Ordering::SeqCst);
         if let Some(window) = app.get_webview_window("hud") {
@@ -1107,19 +1150,27 @@ fn persist_geometry(app: &AppHandle, label: &str) {
             }
             match hud_mode() {
                 HudMode::Panel | HudMode::Menu => {
-                    // 面板 / 菜单可拖动：只把当前位姿反推为自由锚点，不落盘。
+                    // 面板 / 菜单可拖动：把当前位姿反推为收起锚点（自由面板
+                    // 回自由位姿、贴边面板钻回探头边缘），不落盘。
                     if let (Some(px), Some(py)) = (x, y) {
                         let sc = s.hud.scale;
                         let (pw, ph) = hud_sizes(hud_mode(), sc);
-                        let (fw, fh) = hud_sizes(HudMode::Free, sc);
                         let lift = *HUD_PANEL_LIFT.lock().unwrap();
                         let feet_y = py + ph - lift;
-                        let fx = if HUD_PANEL_SIDE_RIGHT.load(Ordering::SeqCst) {
-                            px + pw - fw
+                        if HUD_PANEL_FROM_PEEK.load(Ordering::SeqCst) {
+                            if let Ok(Some(m)) = window.current_monitor() {
+                                let dock_left = !HUD_PANEL_SIDE_RIGHT.load(Ordering::SeqCst);
+                                store_peek_anchor(&m, sc, dock_left, feet_y);
+                            }
                         } else {
-                            px
-                        };
-                        *HUD_ANCHOR.lock().unwrap() = Some((fx, feet_y - fh + 5.0 * sc));
+                            let (fw, fh) = hud_sizes(HudMode::Free, sc);
+                            let fx = if HUD_PANEL_SIDE_RIGHT.load(Ordering::SeqCst) {
+                                px + pw - fw
+                            } else {
+                                px
+                            };
+                            *HUD_ANCHOR.lock().unwrap() = Some((fx, feet_y - fh + 5.0 * sc));
+                        }
                     }
                     return;
                 }
