@@ -162,6 +162,12 @@ let pressStart = { x: 0, y: 0 };
 
 function onBodyPointerDown(e: PointerEvent): void {
   if (animating.value || hidden.value || e.button !== 0) return;
+  // 按住 Handy 即取消悬停展开计时：吸附探头形态下光标一靠近（90ms）就会
+  // 弹出面板，会把随后的系统拖动打断（表现为「吸边后无法拖动」）。
+  if (expandTimer) {
+    clearTimeout(expandTimer);
+    expandTimer = null;
+  }
   pressArmed.value = true;
   pressStart = { x: e.clientX, y: e.clientY };
   try {
@@ -178,6 +184,11 @@ function onBodyPointerMove(e: PointerEvent): void {
   if (dx * dx + dy * dy < PRESS_DRAG_PX * PRESS_DRAG_PX) return;
   pressArmed.value = false;
   void win.startDragging().catch(() => undefined);
+  // 系统拖动接管后指针事件不会再到达：兜底清理按压状态，否则悬停展开
+  // 会被残留的按压状态挡住，探头形态点开面板从此失灵。
+  setTimeout(() => {
+    pressArmed.value = false;
+  }, 400);
 }
 
 function onBodyPointerUp(e: PointerEvent): void {
@@ -209,7 +220,7 @@ function onEnter(): void {
   wake();
   if (shape.value !== "peek") return;
   if (collapseTimer) clearTimeout(collapseTimer);
-  expandTimer = setTimeout(() => void expand(), 90);
+  expandTimer = setTimeout(autoExpand, 90);
 }
 
 function onLeave(): void {
@@ -235,6 +246,12 @@ function scheduleCollapse(): void {
   collapseTimer = setTimeout(() => {
     if (!pointerInside.value && !editingInput()) void collapse();
   }, 200);
+}
+
+/** 自动展开（悬停 / 光标靠近）的统一入口：按住 Handy 时让路给拖动。 */
+function autoExpand(): void {
+  if (pressArmed.value) return;
+  if (shape.value === "peek") void expand();
 }
 
 async function openPanel(): Promise<void> {
@@ -431,7 +448,7 @@ function onCursorNear(): void {
     wake();
     return;
   }
-  if (shape.value === "peek") void expand();
+  if (shape.value === "peek") autoExpand();
 }
 
 let unlistenFocus: (() => void) | null = null;

@@ -1,6 +1,6 @@
 {
   "name": "acta-handy",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Acta Handy 行记·便易 — 把 Acta 的行记数据带到桌面上：待办小组件、笔记小组件与 Handy。",
   "scripts": {
     "dev": "vite",

@@ -4,7 +4,7 @@ mod acta;
 mod history;
 mod settings;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -116,6 +116,142 @@ fn side_str(handy_left: bool) -> &'static str {
     } else {
         "right"
     }
+}
+
+// --- 原子窗口框架 -----------------------------------------------------------
+//
+// 面板开合要同时改窗口的位置与尺寸。分开调用 set_size + set_position 时窗
+// 口框架分两步变化，Handy 会在中间帧错位（表现为弹出面板时闪烁）；这里用
+// 平台原生调用一次完成框架变化：Windows 的 SetWindowPos、macOS 的 NSWindow
+// setFrame:（AppKit 坐标 y 自屏幕底部向上，与 Tauri 的顶部原点相反，用「与
+// 当前逻辑位置的差值」换算，免掉显式的跨屏坐标换算）。
+
+#[cfg(windows)]
+fn set_window_frame(
+    window: &WebviewWindow,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    scale: f64,
+) {
+    #[link(name = "user32")]
+    extern "system" {
+        fn SetWindowPos(
+            hwnd: isize,
+            after: isize,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
+    }
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd.0 as isize,
+                0,
+                (x * scale).round() as i32,
+                (y * scale).round() as i32,
+                (width * scale).round() as i32,
+                (height * scale).round() as i32,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+mod mac_frame {
+    use std::ffi::{c_char, c_void};
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct NSPoint {
+        pub x: f64,
+        pub y: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct NSSize {
+        pub width: f64,
+        pub height: f64,
+    }
+    /// AppKit 的窗口框架：原点在左下、y 向上（点 = 逻辑像素）。
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct NSRect {
+        pub origin: NSPoint,
+        pub size: NSSize,
+    }
+
+    extern "C" {
+        fn sel_registerName(name: *const c_char) -> *const c_void;
+        #[link_name = "objc_msgSend"]
+        fn msg_send_frame(receiver: *mut c_void, sel: *const c_void) -> NSRect;
+        // objc_msgSend 本就按调用方签名声明（ObjC 惯例），两处签名不同是预期。
+        #[allow(clashing_extern_declarations)]
+        #[link_name = "objc_msgSend"]
+        fn msg_send_set_frame(receiver: *mut c_void, sel: *const c_void, frame: NSRect, display: bool);
+    }
+
+    pub fn current(ns_window: *mut c_void) -> NSRect {
+        unsafe {
+            let sel = sel_registerName(b"frame\0".as_ptr() as *const c_char);
+            msg_send_frame(ns_window, sel)
+        }
+    }
+
+    pub fn set(ns_window: *mut c_void, frame: NSRect) {
+        unsafe {
+            let sel = sel_registerName(b"setFrame:display:\0".as_ptr() as *const c_char);
+            msg_send_set_frame(ns_window, sel, frame, true);
+        }
+    }
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn set_window_frame(
+    window: &WebviewWindow,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    scale: f64,
+) {
+    let Ok(pos) = window.outer_position() else { return };
+    let cur_x = pos.x as f64 / scale;
+    let cur_y = pos.y as f64 / scale;
+    let Ok(ns_window) = window.ns_window() else { return };
+    if ns_window.is_null() {
+        return;
+    }
+    let cur = mac_frame::current(ns_window);
+    let frame = mac_frame::NSRect {
+        origin: mac_frame::NSPoint {
+            x: cur.origin.x + (x - cur_x),
+            y: cur.origin.y - (y - cur_y),
+        },
+        size: mac_frame::NSSize { width, height },
+    };
+    mac_frame::set(ns_window, frame);
+}
+
+/// 其他 macOS 架构（未随发布构建）：退回两步调用，位置仍正确，仅可能闪烁。
+#[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
+fn set_window_frame(
+    window: &WebviewWindow,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    _scale: f64,
+) {
+    let _ = window.set_size(LogicalSize::new(width, height));
+    let _ = window.set_position(LogicalPosition::new(x, y));
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -355,9 +491,9 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
         Some(p) => (Some(p.x as f64 / scale), Some(p.y as f64 / scale)),
         None => (None, None),
     };
-    let _ = window.set_size(LogicalSize::new(width, height));
 
     let Some(m) = monitor else {
+        let _ = window.set_size(LogicalSize::new(width, height));
         HUD_MODE.store(mode.to_id(), Ordering::SeqCst);
         return None;
     };
@@ -494,7 +630,7 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
         }
     };
 
-    let _ = window.set_position(LogicalPosition::new(x, y));
+    set_window_frame(&window, x, y, width, height, scale);
     let _ = window.show();
     HUD_MODE.store(mode.to_id(), Ordering::SeqCst);
     placement
@@ -564,8 +700,8 @@ fn set_hud_scale(app: AppHandle, scale: f64) -> Option<HudPlacement> {
             (x, y, None)
         }
     };
-    let _ = window.set_size(LogicalSize::new(hud_sizes(mode, new_s).0, hud_sizes(mode, new_s).1));
-    let _ = window.set_position(LogicalPosition::new(x, y));
+    let (w, h) = hud_sizes(mode, new_s);
+    set_window_frame(&window, x, y, w, h, scale_factor);
     side
 }
 
@@ -721,8 +857,7 @@ fn spawn_snap_animation(app: &AppHandle, target: HudMode) {
                 "hud-anim",
                 serde_json::json!({ "phase": "reveal", "to": "peek", "side": side }),
             );
-            let _ = window.set_size(LogicalSize::new(pw, ph));
-            let _ = window.set_position(LogicalPosition::new(dock_x, dock_y));
+            set_window_frame(&window, dock_x, dock_y, pw, ph, scale);
             HUD_PANEL_SIDE_RIGHT.store(!dock_left, Ordering::SeqCst);
             HUD_MODE.store(HudMode::Peek.to_id(), Ordering::SeqCst);
             std::thread::sleep(Duration::from_millis(480));
@@ -738,7 +873,7 @@ fn spawn_snap_animation(app: &AppHandle, target: HudMode) {
                 "hud-anim",
                 serde_json::json!({ "phase": "reveal", "to": "free", "side": side }),
             );
-            let _ = window.set_size(LogicalSize::new(fw, fh));
+            set_window_frame(&window, cur_x, cur_y, fw, fh, scale);
             HUD_MODE.store(HudMode::Free.to_id(), Ordering::SeqCst);
             let hud = settings::load_from_disk(&app).hud;
             let target = match (hud.x, hud.y) {
@@ -916,6 +1051,8 @@ fn default_position(app: &AppHandle, width: f64, offset: f64) -> LogicalPosition
 
 const SNAP_THRESHOLD: f64 = 48.0;
 const SNAP_MARGIN: f64 = 8.0;
+/// 探头形态松手时离两条竖边都超过这个距离，视为把 Handy 拖离边缘（解除吸附）。
+const PEEK_RELEASE_PX: f64 = 120.0;
 
 /// 磁吸：离屏幕边缘足够近时贴合到固定边距处（左右与上下各自判定）。
 fn snap_to_edges(snap: bool, x: f64, y: f64, w: f64, h: f64, m: &tauri::Monitor) -> (f64, f64) {
@@ -1070,26 +1207,50 @@ pub fn apply_windows(app: &AppHandle, s: &HandySettings) {
 
 // --- geometry persistence ---------------------------------------------------
 
-static PENDING_SAVES: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+static PENDING_SAVES: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
+const GEOMETRY_DEBOUNCE_MS: u128 = 900;
 
-fn schedule_geometry_save(app: &AppHandle, label: &str) {
+fn schedule_geometry_save(_app: &AppHandle, label: &str) {
     if !GEOMETRY_LABELS.contains(&label) {
         return;
     }
-    {
-        let mut pending = PENDING_SAVES.lock().unwrap();
-        let set = pending.get_or_insert_with(HashSet::new);
-        if !set.insert(label.to_string()) {
-            return; // a save is already scheduled; it reads the latest state
+    // 只记录最近一次移动的时间：持续拖动会不断刷新计时，常驻调度线程要等
+    // 停歇 900ms 才落盘。拖动中途落盘会与系统拖动抢窗口（探头形态表现为
+    // 被强行拉回边缘），也会把中间位置写成记忆。
+    PENDING_SAVES
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .insert(label.to_string(), Instant::now());
+}
+
+fn start_geometry_saver(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(120));
+        let due: Vec<String> = {
+            let pending = PENDING_SAVES.lock().unwrap();
+            match pending.as_ref() {
+                Some(map) => map
+                    .iter()
+                    .filter(|(_, at)| at.elapsed().as_millis() >= GEOMETRY_DEBOUNCE_MS)
+                    .map(|(label, _)| label.clone())
+                    .collect(),
+                None => Vec::new(),
+            }
+        };
+        if due.is_empty() {
+            continue;
         }
-    }
-    let app = app.clone();
-    let label = label.to_string();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(900));
-        persist_geometry(&app, &label);
-        if let Some(set) = PENDING_SAVES.lock().unwrap().as_mut() {
-            set.remove(&label);
+        {
+            let mut pending = PENDING_SAVES.lock().unwrap();
+            if let Some(map) = pending.as_mut() {
+                for label in &due {
+                    map.remove(label);
+                }
+            }
+        }
+        for label in due {
+            persist_geometry(&app, &label);
         }
     });
 }
@@ -1180,12 +1341,25 @@ fn persist_geometry(app: &AppHandle, label: &str) {
                     {
                         if let Some(m) = monitor {
                             let (mx, _my, mw, _mh) = monitor_rect(&m);
-                            let dock_left = pos.x as f64 / scale + width / 2.0 < mx + mw / 2.0;
+                            let px = pos.x as f64 / scale;
+                            let py = pos.y as f64 / scale;
+                            let away =
+                                px - mx > PEEK_RELEASE_PX && (mx + mw) - (px + width) > PEEK_RELEASE_PX;
+                            if away {
+                                // 拖离边缘：用户想把 Handy 拖出来站。解除吸附，
+                                // 以自由形态站到落点——落盘后走吸附过渡动画，
+                                // 把他从边缘自然带到落点。
+                                s.hud.snap_to_edge = false;
+                                s.hud.x = Some(px);
+                                s.hud.y = Some(py);
+                                let _ = settings::save_to_disk(app, &s);
+                                let _ = app.emit("settings-changed", &s);
+                                apply_windows(app, &s);
+                                return;
+                            }
+                            let dock_left = px + width / 2.0 < mx + mw / 2.0;
                             let x = if dock_left { mx } else { mx + mw - width };
-                            let _ = window.set_position(LogicalPosition::new(
-                                x,
-                                pos.y as f64 / scale,
-                            ));
+                            let _ = window.set_position(LogicalPosition::new(x, py));
                             if let Ok(pos) = window.outer_position() {
                                 s.hud.x = Some(pos.x as f64 / scale);
                                 s.hud.y = Some(pos.y as f64 / scale);
@@ -1393,6 +1567,7 @@ pub fn run() {
             apply_windows(&handle, &s);
             setup_tray(&handle)?;
             start_watch_thread(handle.clone());
+            start_geometry_saver(handle.clone());
 
             // The settings window reveals itself once the UI is ready; if the
             // renderer never gets there, show it anyway.

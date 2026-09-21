@@ -21,7 +21,7 @@ import SelectMenu from "../components/SelectMenu.vue";
 import type { IconName } from "../types/icons";
 import type { HistoryEntry } from "../types/history";
 
-const APP_VERSION = "0.7.0";
+const APP_VERSION = "0.8.0";
 
 type SectionId = "data" | "todoWidget" | "notesWidget" | "hud" | "general" | "about";
 const active = ref<SectionId>("data");
