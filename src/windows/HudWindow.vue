@@ -77,6 +77,12 @@ const departing = ref(false);
 const closing = ref(false);
 const animating = ref(false);
 const panelFromPeek = ref(false);
+/** 收起面板 / 菜单回到探头的那次切换置真：Handy 一直站在原地，不该重播
+    登场动画（peek-pop 从透明弹现，常驻时重播就是闪一下）；离开探头即复位。 */
+const noPeekPop = ref(false);
+watch(shape, (s) => {
+  if (s !== "peek") noPeekPop.value = false;
+});
 
 const charW = computed(() => Math.round((shape.value === "peek" || fromPeek.value ? 68 : 64) * s.value));
 const panelLift = computed(() => (lift.value > 0 ? lift.value : 5 * s.value));
@@ -296,10 +302,12 @@ async function expand(): Promise<void> {
 async function collapse(): Promise<void> {
   if (shape.value !== "panel" || closing.value) return;
   // 先播 180ms 退出动画（原路滑回 Handy 身后），再切形态，进出同一条路径。
+  // closing 要保持到形态切换之后才清：提前清掉会把 card-in 进场动画（fill
+  // both）重新触发，刚收起的卡片又弹出来闪一下，等 IPC 返回才被卸载。
   closing.value = true;
   await sleep(190);
-  closing.value = false;
   const target = cfg.value.snapToEdge ? "peek" : "free";
+  noPeekPop.value = target === "peek";
   const placement = await setHudMode(target);
   if (placement) {
     edge.value = placement.side;
@@ -307,6 +315,7 @@ async function collapse(): Promise<void> {
   }
   shape.value = target;
   panelFromPeek.value = false;
+  closing.value = false;
   armStealth();
 }
 
@@ -333,15 +342,17 @@ function onScaleCommit(): void {
 
 async function closeMenu(): Promise<void> {
   if (shape.value !== "menu" || closing.value) return;
+  // 时序同 collapse：closing 保持到形态切换之后，卡片不会重播进场动画。
   closing.value = true;
   await sleep(180);
-  closing.value = false;
+  noPeekPop.value = prevShape.value === "peek";
   const placement = await setHudMode(prevShape.value);
   if (placement) {
     edge.value = placement.side;
     lift.value = placement.lift;
   }
   shape.value = prevShape.value;
+  closing.value = false;
   armStealth();
 }
 
@@ -479,7 +490,7 @@ onBeforeUnmount(() => {
 <template>
   <div
     class="hud-root"
-    :class="[shape, `edge-${edge}`, { departing, hidden, 'from-peek': fromPeek }]"
+    :class="[shape, `edge-${edge}`, { departing, hidden, 'from-peek': fromPeek, 'no-pop': noPeekPop }]"
     :style="{ '--s': s, '--lift': panelLift, '--eye-x': eye.x, '--eye-y': eye.y, '--shake': `${shakeAngle}deg` }"
     @pointerenter="onEnter"
     @pointerleave="onLeave"
@@ -605,6 +616,9 @@ onBeforeUnmount(() => {
 /* 收回探头形态时小弹跳登场；展开面板 / 菜单时原地蹦一下把卡片「拽」
    出来——落点不变，只是身体语言。 */
 .hud-root.peek .handy-lean { animation: peek-pop .32s var(--ease-out) both; }
+/* 收起面板 / 菜单回到探头：Handy 常驻原地，不重播登场动画（peek-pop 以透明
+   起点 弹现，常驻元素重播就是闪一下）；真正的出场（启用、贴边动画）不受影响。 */
+.hud-root.peek.no-pop .handy-lean { animation: none; }
 @keyframes peek-pop {
   from { opacity: 0; transform: scale(.86); }
   to { opacity: 1; transform: scale(1); }
