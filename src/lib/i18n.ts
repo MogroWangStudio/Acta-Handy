@@ -10,6 +10,7 @@ const zh = {
   titleTodoWidget: "Acta Handy · 待办小组件",
   titleNotesWidget: "Acta Handy · 笔记小组件",
   titleHud: "Acta Handy · Handy",
+  titleHudPanel: "Acta Handy · Handy 面板",
 
   // Nav
   navData: "数据源",
@@ -166,6 +167,7 @@ const en: Dict = {
   titleTodoWidget: "Acta Handy · Todo Widget",
   titleNotesWidget: "Acta Handy · Notes Widget",
   titleHud: "Acta Handy · Handy",
+  titleHudPanel: "Acta Handy · Handy Panel",
 
   navData: "Data Source",
   navTodoWidget: "Todo Widget",

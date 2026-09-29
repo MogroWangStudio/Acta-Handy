@@ -261,7 +261,10 @@ function invoke(cmd: string, args: Record<string, unknown>): unknown {
     case "set_hud_mode":
       return Promise.resolve(args.mode === "free" ? null : { side: "right", lift: 5 });
     case "popup_hud_menu":
-      fire("hud-menu", { side: "right", lift: 5 });
+      fire("hud-panel", { shown: true, kind: "menu", side: "right" });
+      return null;
+    case "set_hud_panel":
+      fire("hud-panel", { shown: Boolean(args.shown), kind: "panel", side: "right" });
       return null;
     case "set_hud_scale":
       fire("hud-scale", args.scale);
@@ -296,6 +299,11 @@ function fire(event: string, payload: unknown): void {
 
 export function installMock(): void {
   const label = new URLSearchParams(location.search).get("label") ?? "main";
+  if (label === "hud-panel") {
+    setTimeout(() => window.dispatchEvent(new CustomEvent("mock-event", {
+      detail: { event: "hud-panel", payload: { shown: true, kind: "panel", side: "right" } },
+    })), 300);
+  }
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label }, currentWebview: { label } },
     transformCallback: (cb: (evt: { event: string; id: number; payload: unknown }) => void) => {

@@ -60,6 +60,19 @@
         "resizable": false,
         "skipTaskbar": true,
         "fullscreen": false
+      },
+      {
+        "label": "hud-panel",
+        "title": "Acta Handy · Handy 面板",
+        "width": 318,
+        "height": 470,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "fullscreen": false
       }
     ]
   },

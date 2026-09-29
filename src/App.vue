@@ -7,6 +7,7 @@ import SettingsWindow from "./windows/SettingsWindow.vue";
 import TodoWidget from "./windows/TodoWidget.vue";
 import NotesWidget from "./windows/NotesWidget.vue";
 import HudWindow from "./windows/HudWindow.vue";
+import PanelWindow from "./windows/PanelWindow.vue";
 
 const label = getCurrentWindow().label;
 const ready = ref(false);
@@ -18,6 +19,7 @@ const titleKey =
   : label === "todo-widget" ? "titleTodoWidget"
   : label === "notes-widget" ? "titleNotesWidget"
   : label === "hud" ? "titleHud"
+  : label === "hud-panel" ? "titleHudPanel"
   : null;
 
 function applyTitle(): void {
@@ -45,5 +47,8 @@ onMounted(() => {
   </template>
   <template v-else-if="ready && label === 'hud'">
     <HudWindow />
+  </template>
+  <template v-else-if="ready && label === 'hud-panel'">
+    <PanelWindow />
   </template>
 </template>

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ActaData, ActaNote, ActaTodo } from "../types/acta";
 import type { HandySettings } from "../types/settings";
@@ -70,9 +70,14 @@ export interface HudPlacement {
   lift: number;
 }
 
-/** 切换悬浮窗形态；返回停靠信息，自由形态为 null。 */
-export function setHudMode(mode: "free" | "peek" | "panel"): Promise<HudPlacement | null> {
+/** 切换 Handy 窗口形态（自由站立 / 贴边探头）；返回停靠信息，自由形态为 null。 */
+export function setHudMode(mode: "free" | "peek"): Promise<HudPlacement | null> {
   return invoke<HudPlacement | null>("set_hud_mode", { mode });
+}
+
+/** 展开快速编辑面板 / 收起面板与菜单（独立的 hud-panel 窗口，Handy 原地不动）。 */
+export function setHudPanel(shown: boolean): Promise<void> {
+  return invoke("set_hud_panel", { shown });
 }
 
 /** 弹出 Handy 的右键菜单（应用内自绘：大小滑块 + 关闭）。 */
@@ -148,7 +153,16 @@ export function onHudGaze(cb: (gaze: { nx: number; ny: number }) => void): Promi
   return listen<{ nx: number; ny: number }>("hud-gaze", (e) => cb(e.payload)).then(() => undefined);
 }
 
-/** 右键 Handy：后端已把窗口切到菜单形态，payload 为停靠信息。 */
-export function onHudMenu(cb: (placement: HudPlacement) => void): Promise<void> {
-  return listen<HudPlacement>("hud-menu", (e) => cb(e.payload)).then(() => undefined);
+/** 面板 / 菜单窗口的开合广播：kind 为 panel（快速编辑）或 menu（右键菜单），
+    side 为 Handy 站在卡片的哪一侧（卡片朝另一侧展开）。 */
+export function onHudPanel(
+  cb: (payload: { shown: boolean; kind: "panel" | "menu"; side: "left" | "right" }) => void,
+): Promise<void> {
+  return listen<{ shown: boolean; kind: "panel" | "menu"; side: "left" | "right" }>("hud-panel", (e) => cb(e.payload)).then(() => undefined);
+}
+
+/** 光标进入 Handy 窗口的通知：面板用它取消「光标离开就收起」的计时，
+    让光标在两个窗口之间移动时不收起面板。 */
+export function emitHudPanelKeep(): void {
+  void emit("hud-panel-keep");
 }
