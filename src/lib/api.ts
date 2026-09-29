@@ -166,3 +166,9 @@ export function onHudPanel(
 export function emitHudPanelKeep(): void {
   void emit("hud-panel-keep");
 }
+
+/** 光标离开 Handy 窗口的通知：面板据此启动收起计时——光标若正移向面板，
+    面板的 pointerenter 会立刻取消计时，跨过窗口缝隙不误收。 */
+export function emitHudPanelAway(): void {
+  void emit("hud-panel-away");
+}

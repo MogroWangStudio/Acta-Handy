@@ -4,6 +4,7 @@ import { createNote, initStore, store } from "../lib/store";
 import { folderMap, recentNotes } from "../lib/view";
 import { folderColor, folderName, markdownToPlain, shortDate } from "../lib/format";
 import { t } from "../lib/i18n";
+import { useSnapHint } from "../lib/snapHint";
 import { showWindow } from "../lib/api";
 import AppIcon from "../components/AppIcon.vue";
 import FilterChips from "../components/FilterChips.vue";
@@ -11,6 +12,12 @@ import LogoMark from "../components/LogoMark.vue";
 import NoteEditor from "../components/NoteEditor.vue";
 
 onMounted(initStore);
+
+// 拖动中的吸附提示光效：靠近屏幕边缘或待办小组件时亮起（松手即按此贴合）。
+const snapSide = useSnapHint(
+  () => store.settings.notesWidget,
+  () => (store.settings.todoWidget.enabled ? store.settings.todoWidget : null),
+);
 
 const cfg = computed(() => store.settings.notesWidget);
 const notes = computed(() => recentNotes(store.data?.notes ?? []));
@@ -63,7 +70,7 @@ async function openSettings(): Promise<void> {
 
 <template>
   <div class="widget-root">
-    <div class="widget-card" :style="{ opacity: cfg.opacity }">
+    <div class="widget-card" :data-snap="snapSide" :style="{ opacity: cfg.opacity }">
       <header v-if="state !== 'editor'" class="widget-head" data-tauri-drag-region>
         <div>
           <h1 class="widget-title" data-tauri-drag-region>{{ t("recentNotes") }}</h1>

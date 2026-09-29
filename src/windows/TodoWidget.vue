@@ -6,6 +6,7 @@ import { bucketTodos, folderMap } from "../lib/view";
 import { longDate } from "../lib/format";
 import { t } from "../lib/i18n";
 import { refreshData, showWindow } from "../lib/api";
+import { useSnapHint } from "../lib/snapHint";
 import AppIcon from "../components/AppIcon.vue";
 import FilterChips from "../components/FilterChips.vue";
 import CompletedGroup from "../components/CompletedGroup.vue";
@@ -13,6 +14,12 @@ import LogoMark from "../components/LogoMark.vue";
 import TodoRow from "../components/TodoRow.vue";
 
 onMounted(initStore);
+
+// 拖动中的吸附提示光效：靠近屏幕边缘或笔记小组件时亮起（松手即按此贴合）。
+const snapSide = useSnapHint(
+  () => store.settings.todoWidget,
+  () => (store.settings.notesWidget.enabled ? store.settings.notesWidget : null),
+);
 
 const cfg = computed(() => store.settings.todoWidget);
 const buckets = computed(() => bucketTodos(store.data?.todos ?? []));
@@ -73,7 +80,7 @@ async function reload(): Promise<void> {
 
 <template>
   <div class="widget-root">
-    <div class="widget-card" :style="{ opacity: cfg.opacity }">
+    <div class="widget-card" :data-snap="snapSide" :style="{ opacity: cfg.opacity }">
       <header class="widget-head" data-tauri-drag-region>
         <div>
           <h1 class="widget-title" data-tauri-drag-region>{{ t("todayTodos") }}</h1>

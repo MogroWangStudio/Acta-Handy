@@ -474,6 +474,10 @@ fn hide_panel(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("hud-panel") {
         let _ = window.hide();
     }
+    // 关闭同样要广播：Handy 窗口的「面板开着」状态全靠这个事件归位，
+    // 漏了它面板就成了「一次性」——收起后再也唤不出来。
+    let kind = if PANEL_MENU.load(Ordering::SeqCst) { "menu" } else { "panel" };
+    let _ = app.emit("hud-panel", serde_json::json!({ "shown": false, "kind": kind, "side": "right" }));
 }
 
 /// 面板开着时的重锚：Handy 位姿变了（缩放 / 吸附切换），面板窗口按新位姿
@@ -580,8 +584,19 @@ fn set_hud_panel(app: AppHandle, shown: bool) {
         hide_panel(&app);
         return;
     }
-    if HUD_ANIMATING.load(Ordering::SeqCst) || PANEL_OPEN.load(Ordering::SeqCst) {
+    if HUD_ANIMATING.load(Ordering::SeqCst) {
         return;
+    }
+    if PANEL_OPEN.load(Ordering::SeqCst) {
+        // 状态漂移防御：后端记着「开着」但窗口实际看不见（收起命令丢失、
+        // 或异常路径漏了归位），就当没开过重新展开——面板永不因此打不开。
+        let visible = app
+            .get_webview_window("hud-panel")
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false);
+        if visible {
+            return;
+        }
     }
     show_panel(&app, false, false);
 }
@@ -1031,6 +1046,62 @@ fn widget_snap(app: &AppHandle, label: &str) -> bool {
     }
 }
 
+/// 另一个小组件的当前逻辑矩形（可见才有意义）——互相吸附的目标。
+fn other_widget_rect(app: &AppHandle, label: &str) -> Option<(f64, f64, f64, f64)> {
+    let other = if label == "todo-widget" {
+        "notes-widget"
+    } else if label == "notes-widget" {
+        "todo-widget"
+    } else {
+        return None;
+    };
+    let window = app.get_webview_window(other)?;
+    if !window.is_visible().ok()? {
+        return None;
+    }
+    let sc = window.scale_factor().ok()?;
+    let pos = window.outer_position().ok()?;
+    let size = window.outer_size().ok()?;
+    Some((pos.x as f64 / sc, pos.y as f64 / sc, size.width as f64 / sc, size.height as f64 / sc))
+}
+
+/// 互相吸附：拖到另一个小组件身边（48px 内）时贴合到它的边（留 8px 缝隙）。
+/// 只吸靠近的那条轴、另一轴保持拖动落点，不会把窗口瞬移到别处；
+/// 水平 / 垂直命中都可能时取更近的一个。返回吸附后的位置，未命中 None。
+fn snap_to_widget(x: f64, y: f64, w: f64, h: f64, other: (f64, f64, f64, f64)) -> Option<(f64, f64)> {
+    let (ox, oy, ow, oh) = other;
+    let v_overlap = y < oy + oh + SNAP_THRESHOLD && y + h > oy - SNAP_THRESHOLD;
+    let h_overlap = x < ox + ow + SNAP_THRESHOLD && x + w > ox - SNAP_THRESHOLD;
+    let mut best: Option<(f64, f64, f64)> = None; // (距离, x, y)
+    let mut consider = |ax: f64, ay: f64| {
+        let d = (ax - x).hypot(ay - y);
+        if best.map_or(true, |(bd, _, _)| d < bd) {
+            best = Some((d, ax, ay));
+        }
+    };
+    if v_overlap {
+        let rx = ox + ow + SNAP_MARGIN;
+        if (rx - x).abs() <= SNAP_THRESHOLD {
+            consider(rx, y);
+        }
+        let lx = ox - SNAP_MARGIN - w;
+        if (lx - x).abs() <= SNAP_THRESHOLD {
+            consider(lx, y);
+        }
+    }
+    if h_overlap {
+        let by = oy + oh + SNAP_MARGIN;
+        if (by - y).abs() <= SNAP_THRESHOLD {
+            consider(x, by);
+        }
+        let ty = oy - SNAP_MARGIN - h;
+        if (ty - y).abs() <= SNAP_THRESHOLD {
+            consider(x, ty);
+        }
+    }
+    best.map(|(_, ax, ay)| (ax, ay))
+}
+
 fn apply_widget(
     app: &AppHandle,
     label: &str,
@@ -1250,18 +1321,38 @@ fn persist_geometry(app: &AppHandle, label: &str) {
             s.window.height = height;
         }
         "todo-widget" | "notes-widget" => {
-            // 吸附开启：拖动停歇后先贴合到边缘，再记忆贴合后的位置。
+            // 吸附开启：拖动停歇后先试着贴到另一个小组件身边，贴不上屏幕
+            // 边缘再兜底，最后记忆贴合后的位置。
             let snap = widget_snap(app, label);
             let (mut px, mut py) = (x.unwrap_or(0.0), y.unwrap_or(0.0));
             if snap {
-                if let Some(m) = window.current_monitor().ok().flatten() {
-                    let (sx, sy) = snap_to_edges(true, px, py, width, height, &m);
-                    if (sx - px).abs() > 0.5 || (sy - py).abs() > 0.5 {
-                        let _ = window.set_position(LogicalPosition::new(sx, sy));
-                        if let (Ok(p), Ok(sc)) = (window.outer_position(), window.scale_factor()) {
-                            px = p.x as f64 / sc;
-                            py = p.y as f64 / sc;
+                let mut target = other_widget_rect(app, label).and_then(|other| {
+                    snap_to_widget(px, py, width, height, other)
+                });
+                if target.is_none() {
+                    if let Some(m) = window.current_monitor().ok().flatten() {
+                        let (sx, sy) = snap_to_edges(true, px, py, width, height, &m);
+                        if (sx - px).abs() > 0.5 || (sy - py).abs() > 0.5 {
+                            target = Some((sx, sy));
                         }
+                    }
+                }
+                if let Some((tx, ty)) = target {
+                    // 互吸点可能被推到屏幕外：收回屏内再落位。
+                    let (tx, ty) = match window.current_monitor().ok().flatten() {
+                        Some(m) => {
+                            let (mx, my, mw, mh) = monitor_rect(&m);
+                            (
+                                tx.clamp(mx, (mx + mw - width).max(mx)),
+                                ty.clamp(my, (my + mh - height).max(my)),
+                            )
+                        }
+                        None => (tx, ty),
+                    };
+                    let _ = window.set_position(LogicalPosition::new(tx, ty));
+                    if let (Ok(p), Ok(sc)) = (window.outer_position(), window.scale_factor()) {
+                        px = p.x as f64 / sc;
+                        py = p.y as f64 / sc;
                     }
                 }
             }

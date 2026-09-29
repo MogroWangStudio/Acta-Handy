@@ -39,11 +39,17 @@ export interface MainWindowConfig {
   height: number;
 }
 
+export type FontChoice = "system" | "serif" | "kai" | "rounded";
+
 export interface HandySettings {
   version: number;
   dataFolder: string;
   theme: ThemeChoice;
   language: LanguageChoice;
+  /** 界面字体预设：跟随系统 / 衬线 / 楷体 / 圆体。 */
+  font: FontChoice;
+  /** 字体大小（整体缩放）：0.9–1.25。 */
+  fontScale: number;
   refreshIntervalSecs: number;
   window: MainWindowConfig;
   todoWidget: WidgetConfig;
@@ -56,6 +62,8 @@ export const DEFAULT_SETTINGS: HandySettings = {
   dataFolder: "",
   theme: "auto",
   language: "zh",
+  font: "system",
+  fontScale: 1,
   refreshIntervalSecs: 30,
   window: { x: null, y: null, width: 940, height: 640 },
   todoWidget: {

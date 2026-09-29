@@ -19,6 +19,8 @@ function mockSettings(): HandySettings {
     dataFolder: "/Users/demo/Acta 数据文件夹",
     theme: "auto",
     language: "zh",
+    font: "system",
+    fontScale: 1,
     refreshIntervalSecs: 30,
     window: { x: null, y: null, width: 940, height: 640 },
     todoWidget: { enabled: true, x: null, y: null, width: 300, height: 360, opacity: 1, alwaysOnTop: false, showCompleted: true, snapToEdge: false },

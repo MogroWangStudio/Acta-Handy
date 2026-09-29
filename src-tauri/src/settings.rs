@@ -17,6 +17,10 @@ pub struct HandySettings {
     pub data_folder: String,
     pub theme: String,
     pub language: String,
+    /// 界面字体预设（跟随系统 / 衬线 / 楷体 / 圆体）。
+    pub font: String,
+    /// 字体大小（整体缩放 0.9–1.3）。
+    pub font_scale: f64,
     pub refresh_interval_secs: u32,
     /// 设置窗口自身的位置与大小：关闭只是隐藏，下次打开恢复原状。
     pub window: MainWindowConfig,
@@ -32,6 +36,8 @@ impl Default for HandySettings {
             data_folder: String::new(),
             theme: "auto".to_string(),
             language: "zh".to_string(),
+            font: "system".to_string(),
+            font_scale: 1.0,
             refresh_interval_secs: 30,
             window: MainWindowConfig::default(),
             todo_widget: WidgetConfig {
@@ -142,6 +148,11 @@ impl HandySettings {
             "en" => self.language,
             _ => "zh".to_string(),
         };
+        self.font = match self.font.as_str() {
+            "serif" | "kai" | "rounded" => self.font,
+            _ => "system".to_string(),
+        };
+        self.font_scale = self.font_scale.clamp(0.9, 1.3);
         for cfg in [&mut self.todo_widget, &mut self.notes_widget] {
             cfg.width = cfg.width.clamp(240.0, 720.0);
             cfg.height = cfg.height.clamp(200.0, 1200.0);

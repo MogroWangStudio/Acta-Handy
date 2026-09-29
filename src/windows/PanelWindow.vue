@@ -32,6 +32,7 @@ onMounted(async () => {
     liveScale.value = store.settings.hud.scale;
   });
   void listen("hud-panel-keep", cancelCollapse);
+  void listen("hud-panel-away", scheduleCollapse);
   await win.onFocusChanged(({ payload: focused }) => {
     // 菜单开着时失焦 = 点了外面，与系统菜单的点外关闭一致。面板不抢焦点，
     // 失焦无意义，只按光标离开收起。
@@ -42,12 +43,16 @@ onMounted(async () => {
 
 let collapseTimer: ReturnType<typeof setTimeout> | null = null;
 
-function onLeave(): void {
+function scheduleCollapse(): void {
   if (kind.value !== "panel" || closing.value) return;
   if (collapseTimer) clearTimeout(collapseTimer);
   collapseTimer = setTimeout(() => {
     if (kind.value === "panel" && !closing.value) void close();
   }, 360);
+}
+
+function onLeave(): void {
+  scheduleCollapse();
 }
 
 function cancelCollapse(): void {
@@ -93,7 +98,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="panel-root" :class="[`edge-${side}`, { closing }]">
     <!-- 快速编辑面板：Handy 站在屏幕边缘 / 原位一侧，面板从它身后展开 -->
-    <div v-if="kind === 'panel'" class="panel-card" @pointerleave="onLeave">
+    <div v-if="kind === 'panel'" class="panel-card" @pointerenter="cancelCollapse" @pointerleave="onLeave">
       <HudPanel class="panel-slide" />
     </div>
 

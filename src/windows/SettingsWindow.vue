@@ -21,7 +21,7 @@ import SelectMenu from "../components/SelectMenu.vue";
 import type { IconName } from "../types/icons";
 import type { HistoryEntry } from "../types/history";
 
-const APP_VERSION = "0.9.0";
+const APP_VERSION = "0.10.0";
 
 type SectionId = "data" | "todoWidget" | "notesWidget" | "hud" | "general" | "about";
 const active = ref<SectionId>("data");
@@ -95,6 +95,20 @@ const LANGUAGE_OPTIONS = [
 ];
 
 // Handy 身体颜色：应用色板预设（与设计令牌同名），auto 跟随主题墨色。
+// 字体预设与字号：值与 settings.rs 的白名单 / 缩放范围对应。
+const FONT_OPTIONS = computed(() => [
+  { value: "system", label: t("fontSystem") },
+  { value: "serif", label: t("fontSerif") },
+  { value: "kai", label: t("fontKai") },
+  { value: "rounded", label: t("fontRounded") },
+]);
+const FONT_SIZE_OPTIONS = computed(() => [
+  { value: 0.9, label: t("fontScaleSmall") },
+  { value: 1.0, label: t("fontScaleStandard") },
+  { value: 1.1, label: t("fontScaleLarge") },
+  { value: 1.25, label: t("fontScaleXL") },
+]);
+
 const COLOR_OPTIONS = computed(() => [
   { value: "auto", label: t("colorAuto") },
   { value: "sage", label: t("colorSage") },
@@ -424,6 +438,14 @@ onBeforeUnmount(() => {
             <div class="row">
               <span class="row-copy"><b>{{ t("language") }}</b></span>
               <SelectMenu v-model="store.settings.language" :options="LANGUAGE_OPTIONS" @update:model-value="save" />
+            </div>
+            <div class="row">
+              <span class="row-copy"><b>{{ t("fontFamily") }}</b><small>{{ t("fontFamilyDesc") }}</small></span>
+              <SelectMenu v-model="store.settings.font" :options="FONT_OPTIONS" @update:model-value="save" />
+            </div>
+            <div class="row">
+              <span class="row-copy"><b>{{ t("fontSize") }}</b><small>{{ t("fontSizeDesc") }}</small></span>
+              <SelectMenu :model-value="store.settings.fontScale" :options="FONT_SIZE_OPTIONS" @update:model-value="(v) => { store.settings.fontScale = Number(v); save(); }" />
             </div>
           </div>
         </section>

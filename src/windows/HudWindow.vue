@@ -11,6 +11,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { initStore, store } from "../lib/store";
 import {
+  emitHudPanelAway,
   emitHudPanelKeep,
   onHudAnim,
   onHudGaze,
@@ -228,6 +229,9 @@ function onEnter(): void {
 function onLeave(): void {
   pointerInside.value = false;
   if (expandTimer) clearTimeout(expandTimer);
+  // 光标离开 Handy：若面板开着，通知它启动收起计时（光标移向面板时，
+  // 面板的 pointerenter 会取消计时）。
+  if (panelOpen.value) emitHudPanelAway();
   armStealth();
 }
 

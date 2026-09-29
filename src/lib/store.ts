@@ -10,7 +10,7 @@ import {
   writeNote,
   writeTodoCheck,
 } from "./api";
-import { applyTheme } from "./theme";
+import { applyAppearance } from "./theme";
 
 interface StoreState {
   ready: boolean;
@@ -30,6 +30,8 @@ export const store = reactive<StoreState>({
     dataFolder: "",
     theme: "auto",
     language: "zh",
+    font: "system",
+    fontScale: 1,
     refreshIntervalSecs: 30,
     window: { x: null, y: null, width: 940, height: 640 },
     todoWidget: { enabled: false, x: null, y: null, width: 300, height: 360, opacity: 1, alwaysOnTop: false, showCompleted: false, snapToEdge: false },
@@ -79,7 +81,7 @@ async function doInit(): Promise<void> {
   } catch {
     // Keep placeholder defaults; the settings window still renders.
   }
-  applyTheme(store.settings.theme);
+  applyAppearance(store.settings);
   await refreshActaData();
   void onDataChanged(() => {
     if (wroteRecently()) return; // echo of our own write
@@ -88,7 +90,7 @@ async function doInit(): Promise<void> {
   void onSettingsChanged((settings) => {
     const folderChanged = settings.dataFolder !== store.settings.dataFolder;
     store.settings = settings;
-    applyTheme(settings.theme);
+    applyAppearance(settings);
     if (folderChanged) void refreshActaData();
   });
   store.ready = true;
@@ -120,7 +122,7 @@ export async function refreshActaData(force = false): Promise<void> {
 /** Push settings to the backend; every window (incl. this one) reloads via the event. */
 export async function persistSettings(settings: HandySettings): Promise<void> {
   store.settings = await saveSettingsApi(settings);
-  applyTheme(store.settings.theme);
+  applyAppearance(store.settings);
 }
 
 // --- writes -----------------------------------------------------------------
