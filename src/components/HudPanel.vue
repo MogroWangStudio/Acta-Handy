@@ -7,6 +7,7 @@ import { folderColor, folderName, longDate, markdownToPlain } from "../lib/forma
 import { t } from "../lib/i18n";
 import TodoRow from "./TodoRow.vue";
 import NoteEditor from "./NoteEditor.vue";
+import CompletedGroup from "./CompletedGroup.vue";
 
 const tab = ref<"todos" | "notes">("todos");
 
@@ -15,11 +16,8 @@ const folders = computed(() => folderMap(store.data));
 const today = computed(() => longDate(new Date()));
 const pct = computed(() => (buckets.value.totalToday ? buckets.value.doneToday / buckets.value.totalToday : 0));
 
-const shown = computed(() =>
-  store.settings.todoWidget.showCompleted
-    ? [...buckets.value.current, ...buckets.value.completed]
-    : buckets.value.current,
-);
+const shown = computed(() => buckets.value.current);
+const completed = computed(() => buckets.value.completed);
 
 const notes = computed(() => recentNotes(store.data?.notes ?? [], 30));
 const snippets = computed(
@@ -65,7 +63,7 @@ async function newNote(): Promise<void> {
 
     <div v-if="tab === 'todos'" class="panel-body">
       <p v-if="!store.settings.dataFolder" class="panel-hint">{{ t("panelNoFolder") }}</p>
-      <ul v-else-if="shown.length > 0" class="panel-list">
+      <ul v-else-if="shown.length > 0 || completed.length > 0" class="panel-list">
         <TodoRow
           v-for="todo in shown"
           :key="todo.id"
@@ -74,6 +72,8 @@ async function newNote(): Promise<void> {
           @check="(completed) => checkTodo(todo.id, completed)"
           @check-task="(taskId) => checkTask(todo.id, taskId)"
         />
+        <!-- 已完成沉底：折叠条右端的开关就地切换「显示已完成」 -->
+        <CompletedGroup v-if="completed.length > 0" :todos="completed" toggleable />
       </ul>
       <p v-else class="panel-hint">{{ buckets.totalToday > 0 ? t("hudAllDone") : t("hudNothing") }}</p>
     </div>

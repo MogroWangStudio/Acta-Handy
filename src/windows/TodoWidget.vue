@@ -8,6 +8,7 @@ import { t } from "../lib/i18n";
 import { refreshData, showWindow } from "../lib/api";
 import AppIcon from "../components/AppIcon.vue";
 import FilterChips from "../components/FilterChips.vue";
+import CompletedGroup from "../components/CompletedGroup.vue";
 import LogoMark from "../components/LogoMark.vue";
 import TodoRow from "../components/TodoRow.vue";
 
@@ -46,10 +47,9 @@ function endOfToday(): number {
   return d.getTime();
 }
 
-const shown = computed(() =>
-  cfg.value.showCompleted
-    ? [...buckets.value.current, ...completedToday.value].filter(inFilter)
-    : buckets.value.current.filter(inFilter),
+const shown = computed(() => buckets.value.current.filter(inFilter));
+const shownCompleted = computed(() =>
+  cfg.value.showCompleted ? completedToday.value.filter(inFilter) : [],
 );
 const shownUpcoming = computed(() => buckets.value.upcoming.filter(inFilter));
 type WidgetState = "no-folder" | "error" | "clear" | "upcoming" | "list";
@@ -116,6 +116,8 @@ async function reload(): Promise<void> {
               @check-task="(taskId) => checkTask(todo.id, taskId)"
             />
           </template>
+          <!-- 已完成沉底：默认折叠的一条「已完成 N」，点开查看 -->
+          <CompletedGroup v-if="shownCompleted.length > 0" :todos="shownCompleted" />
         </ul>
       </template>
 
