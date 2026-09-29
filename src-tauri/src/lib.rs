@@ -1554,7 +1554,26 @@ fn fix_windows_window_icons(app: &AppHandle) {
     }
 }
 
+/// Windows 便携化：WebView2 的用户数据（缓存、GPU 与站点数据）默认落系统盘
+/// AppData。我们在窗口创建前指到 exe 同目录的 webview-data，整份软件拷走即
+/// 全部数据随行——设置与修改历史本就在 exe 目录，这里补上最后一块。WebView2
+/// 拿到空数据目录时会尊重该环境变量（官方 loader 机制）；exe 所在目录不可写
+/// 时不动它，退回系统默认，宁可回落也不让 webview 建不出来。
+#[cfg(windows)]
+fn keep_webview_data_portable() {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let Some(dir) = exe_dir else { return };
+    let udf = dir.join("webview-data");
+    if std::fs::create_dir_all(&udf).is_ok() {
+        std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &udf);
+    }
+}
+
 pub fn run() {
+    #[cfg(windows)]
+    keep_webview_data_portable();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 二次启动：把已有实例的设置窗口带到前台。

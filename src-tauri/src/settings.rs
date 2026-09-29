@@ -152,8 +152,8 @@ impl HandySettings {
     }
 }
 
-/// 应用数据目录：Windows 便携版为 exe 同目录（数据随 exe 走），其余平台为
-/// 应用配置目录。设置与修改历史都放在这里。
+/// 应用数据目录：Windows 便携版为 exe 同目录（数据随 exe 走，WebView2 数据
+/// 也经 WEBVIEW2_USER_DATA_FOLDER 落在这里）；其余平台为应用配置目录。
 pub fn data_dir(app: &AppHandle) -> Option<PathBuf> {
     if cfg!(windows) {
         if let Ok(dir) = app.path().executable_dir() {
@@ -161,6 +161,14 @@ pub fn data_dir(app: &AppHandle) -> Option<PathBuf> {
                 return Some(dir.to_path_buf());
             }
         }
+        // exe 路径拿不到（极罕见）时退回当前目录，不写 AppData：宁可数据
+        // 落在运行目录，也不违背「拷走文件夹即带走全部数据」的便携承诺。
+        if let Ok(dir) = std::env::current_dir() {
+            if !dir.as_os_str().is_empty() {
+                return Some(dir);
+            }
+        }
+        return None;
     }
     app.path().app_config_dir().ok()
 }
