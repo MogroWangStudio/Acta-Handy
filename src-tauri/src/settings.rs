@@ -258,7 +258,9 @@ pub fn save_settings(app: AppHandle, settings: HandySettings) -> Result<HandySet
     crate::HUD_LAST_SCALE.store((clean.hud.scale * 1000.0).round() as u32, Ordering::SeqCst);
     crate::HUD_LIVE_SCALE.store(0, Ordering::SeqCst);
     save_to_disk(&app, &clean)?;
-    let _ = app.emit("settings-changed", &clean);
+    // 先应用（吸附切换时动画 start 事件同步发出），再广播设置：前端
+    // animating 先置位，形态同步等动画，不在旧窗口框架里抢先切换布局。
     crate::apply_windows(&app, &clean);
+    let _ = app.emit("settings-changed", &clean);
     Ok(clean)
 }

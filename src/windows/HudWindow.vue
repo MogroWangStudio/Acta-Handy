@@ -407,12 +407,17 @@ function onAnim(payload: {
   } else if (payload.phase === "reveal" && payload.to) {
     departing.value = false;
     if (payload.side) edge.value = payload.side;
+    // 动画中的形态切换：Handy 一直可见（此刻刚从屏幕外探进来 / 滑回落点），
+    // 不重播 peek-pop 登场动画（透明起点弹现 = 闪一下）；登场只留给真正的出场。
+    if (payload.to === "peek") noPeekPop.value = true;
     shape.value = payload.to;
   } else if (payload.phase === "end") {
     animating.value = false;
     departing.value = false;
     panelFromPeek.value = false;
-    shape.value = cfg.value.snapToEdge ? "peek" : "free";
+    const next = cfg.value.snapToEdge ? "peek" : "free";
+    noPeekPop.value = next === "peek";
+    shape.value = next;
     armStealth();
   }
 }

@@ -731,8 +731,8 @@ fn set_hud_enabled(app: AppHandle, enabled: bool) {
     let mut s = settings::load_from_disk(&app);
     s.hud.enabled = enabled;
     let _ = settings::save_to_disk(&app, &s);
+    apply_windows(&app, &s); // 先应用（动画 start 先发），再广播，时序同 save_settings。
     let _ = app.emit("settings-changed", &s);
-    apply_windows(&app, &s);
 }
 
 // --- 贴边过渡动画 -----------------------------------------------------------
@@ -815,49 +815,52 @@ fn spawn_snap_animation(app: &AppHandle, target: HudMode) {
     if HUD_ANIMATING.swap(true, Ordering::SeqCst) {
         return;
     }
-    let app = app.clone();
     let to_peek = target == HudMode::Peek;
-    std::thread::spawn(move || {
-        let bail = |app: &AppHandle| {
-            HUD_ANIMATING.store(false, Ordering::SeqCst);
-            let _ = app.emit("hud-anim", serde_json::json!({ "phase": "end" }));
-        };
-        let Some(window) = app.get_webview_window("hud") else {
-            bail(&app);
-            return;
-        };
-        let s = hud_scale(&app);
-        let Some(m) = window
-            .current_monitor()
-            .ok()
-            .flatten()
-            .or_else(|| app.primary_monitor().ok().flatten())
-        else {
-            bail(&app);
-            apply_windows(&app, &settings::load_from_disk(&app));
-            return;
-        };
-        let scale = m.scale_factor();
-        let (mx, my, mw, mh) = monitor_rect(&m);
-        let (cur_x, cur_y) = match window.outer_position().ok() {
-            Some(p) => (p.x as f64 / scale, p.y as f64 / scale),
-            None => (mx, my),
-        };
+    let bail = |app: &AppHandle| {
+        HUD_ANIMATING.store(false, Ordering::SeqCst);
+        let _ = app.emit("hud-anim", serde_json::json!({ "phase": "end" }));
+    };
+    // 几何与方向在这里算好，start 也同步发出：它必须赶在「设置变更」广播
+    // 之前到达前端（本函数可能从 save_settings 路径进入），animating 先置
+    // 位，前端才不会抢先切换形态、让 Handy 在旧窗口框架里错位闪现。
+    let Some(window) = app.get_webview_window("hud") else {
+        bail(app);
+        return;
+    };
+    let s = hud_scale(app);
+    let Some(m) = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten())
+    else {
+        bail(app);
+        apply_windows(app, &settings::load_from_disk(app));
+        return;
+    };
+    let scale = m.scale_factor();
+    let (mx, my, mw, mh) = monitor_rect(&m);
+    let (cur_x, cur_y) = match window.outer_position().ok() {
+        Some(p) => (p.x as f64 / scale, p.y as f64 / scale),
+        None => (mx, my),
+    };
+    let app = app.clone();
 
-        if to_peek {
-            let (w, _h) = hud_sizes(HudMode::Free, s);
-            let dock_left = cur_x + w / 2.0 < mx + mw / 2.0;
-            let side = side_str(dock_left);
-            // start 即带方向：前端让 Handy 提前朝目标边探身，动画有身体语言。
-            let _ = app.emit(
-                "hud-anim",
-                serde_json::json!({ "phase": "start", "to": "peek", "side": side }),
-            );
-            let (pw, ph) = hud_sizes(HudMode::Peek, s);
-            let dock_x = if dock_left { mx } else { mx + mw - pw };
-            let dock_y = cur_y.clamp(my + 12.0, (my + mh - ph - 12.0).max(my + 12.0));
-            let edge_x = if dock_left { mx } else { mx + mw - w };
-            let off_x = if dock_left { mx - w } else { mx + mw };
+    if to_peek {
+        let (w, _h) = hud_sizes(HudMode::Free, s);
+        let dock_left = cur_x + w / 2.0 < mx + mw / 2.0;
+        let side = side_str(dock_left);
+        // start 即带方向：前端让 Handy 提前朝目标边探身，动画有身体语言。
+        let _ = app.emit(
+            "hud-anim",
+            serde_json::json!({ "phase": "start", "to": "peek", "side": side }),
+        );
+        let (pw, ph) = hud_sizes(HudMode::Peek, s);
+        let dock_x = if dock_left { mx } else { mx + mw - pw };
+        let dock_y = cur_y.clamp(my + 12.0, (my + mh - ph - 12.0).max(my + 12.0));
+        let edge_x = if dock_left { mx } else { mx + mw - w };
+        let off_x = if dock_left { mx - w } else { mx + mw };
+        std::thread::spawn(move || {
             animate_window_depart(&window, (cur_x, cur_y), (edge_x, cur_y), (off_x, cur_y), 720);
             let _ = app.emit(
                 "hud-anim",
@@ -867,21 +870,31 @@ fn spawn_snap_animation(app: &AppHandle, target: HudMode) {
             HUD_PANEL_SIDE_RIGHT.store(!dock_left, Ordering::SeqCst);
             HUD_MODE.store(HudMode::Peek.to_id(), Ordering::SeqCst);
             std::thread::sleep(Duration::from_millis(480));
-        } else {
-            let (fw, fh) = hud_sizes(HudMode::Free, s);
-            let dock_left = cur_x + 25.0 * s < mx + mw / 2.0;
-            let side = side_str(dock_left);
-            let _ = app.emit(
-                "hud-anim",
-                serde_json::json!({ "phase": "start", "to": "free", "side": side }),
-            );
-            let _ = app.emit(
+            std::thread::sleep(Duration::from_millis(140));
+            HUD_ANIMATING.store(false, Ordering::SeqCst);
+            let _ = app.emit("hud-anim", serde_json::json!({ "phase": "end" }));
+            // 先把动画落点记进设置，再让动画期间的设置变更统一生效，避免回跳。
+            persist_geometry(&app, "hud");
+            apply_windows(&app, &settings::load_from_disk(&app));
+        });
+    } else {
+        let (fw, fh) = hud_sizes(HudMode::Free, s);
+        let dock_left = cur_x + 25.0 * s < mx + mw / 2.0;
+        let side = side_str(dock_left);
+        let _ = app.emit(
+            "hud-anim",
+            serde_json::json!({ "phase": "start", "to": "free", "side": side }),
+        );
+        let app2 = app.clone();
+        let window2 = window.clone();
+        std::thread::spawn(move || {
+            let _ = app2.emit(
                 "hud-anim",
                 serde_json::json!({ "phase": "reveal", "to": "free", "side": side }),
             );
-            set_window_frame(&window, cur_x, cur_y, fw, fh, scale);
+            set_window_frame(&window2, cur_x, cur_y, fw, fh, scale);
             HUD_MODE.store(HudMode::Free.to_id(), Ordering::SeqCst);
-            let hud = settings::load_from_disk(&app).hud;
+            let hud = settings::load_from_disk(&app2).hud;
             let target = match (hud.x, hud.y) {
                 (Some(x), Some(y)) => (x, y),
                 _ => {
@@ -890,16 +903,14 @@ fn spawn_snap_animation(app: &AppHandle, target: HudMode) {
                     (x, y)
                 }
             };
-            animate_window_to(&window, (cur_x, cur_y), target, 640, ease_out_cubic);
-        }
-
-        std::thread::sleep(Duration::from_millis(140));
-        HUD_ANIMATING.store(false, Ordering::SeqCst);
-        let _ = app.emit("hud-anim", serde_json::json!({ "phase": "end" }));
-        // 先把动画落点记进设置，再让动画期间的设置变更统一生效，避免回跳。
-        persist_geometry(&app, "hud");
-        apply_windows(&app, &settings::load_from_disk(&app));
-    });
+            animate_window_to(&window2, (cur_x, cur_y), target, 640, ease_out_cubic);
+            std::thread::sleep(Duration::from_millis(140));
+            HUD_ANIMATING.store(false, Ordering::SeqCst);
+            let _ = app2.emit("hud-anim", serde_json::json!({ "phase": "end" }));
+            persist_geometry(&app2, "hud");
+            apply_windows(&app2, &settings::load_from_disk(&app2));
+        });
+    }
 }
 
 // --- Handy 右键菜单（应用内自绘，替代原生菜单） ------------------------------
@@ -1377,8 +1388,8 @@ fn persist_geometry(app: &AppHandle, label: &str) {
                                 s.hud.x = Some(px);
                                 s.hud.y = Some(py);
                                 let _ = settings::save_to_disk(app, &s);
+                                apply_windows(app, &s); // 先应用（动画 start 先发），再广播。
                                 let _ = app.emit("settings-changed", &s);
-                                apply_windows(app, &s);
                                 return;
                             }
                             let dock_left = px + width / 2.0 < mx + mw / 2.0;
@@ -1520,8 +1531,8 @@ fn handle_tray_event(app: &AppHandle, id: &str) {
                 _ => s.hud.enabled = !s.hud.enabled,
             }
             let _ = settings::save_to_disk(app, &s);
+            apply_windows(app, &s); // 先应用（动画 start 先发），再广播，时序同 save_settings。
             let _ = app.emit("settings-changed", &s);
-            apply_windows(app, &s);
             refresh_tray_menu(app);
         }
         _ => {}
