@@ -1149,6 +1149,11 @@ fn apply_main_window(app: &AppHandle, s: &HandySettings) {
     if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
         return;
     }
+    // 窗口正开着就不再摆布几何：几何只在启动时恢复一次，之后随用户的
+    // 拖动与缩放走。保存任何设置都重放一遍尺寸，窗口会被来回改动。
+    if window.is_visible().unwrap_or(false) {
+        return;
+    }
     let width = s.window.width.max(860.0);
     let height = s.window.height.max(560.0);
     let _ = window.set_size(LogicalSize::new(width, height));
@@ -1272,8 +1277,11 @@ fn persist_geometry(app: &AppHandle, label: &str) {
     if !window.is_visible().unwrap_or(false) {
         return;
     }
+    // 记内容尺寸（inner）：set_size 恢复的正是内容尺寸。macOS 上设置窗口
+    // 有系统标题栏，外部尺寸比内容高出一个标题栏，存外部尺寸再放回内容，
+    // 窗口每往返一次就长高一截。
     let (Ok(scale), Ok(pos), Ok(size)) =
-        (window.scale_factor(), window.outer_position(), window.outer_size())
+        (window.scale_factor(), window.outer_position(), window.inner_size())
     else {
         return;
     };
