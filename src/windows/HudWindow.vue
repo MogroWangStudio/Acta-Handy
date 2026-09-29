@@ -87,6 +87,17 @@ watch(shape, (s) => {
 const charW = computed(() => Math.round((shape.value === "peek" || fromPeek.value ? 68 : 64) * s.value));
 const panelLift = computed(() => (lift.value > 0 ? lift.value : 5 * s.value));
 
+/** Handy 身体颜色：应用色板预设映射到主题 token（深浅主题自动适配），
+    auto 跟随主题墨色。SVG 以 currentColor 填充，改 color 即全身生效。 */
+const HANDY_COLORS: Record<string, string> = {
+  auto: "var(--ink)",
+  sage: "var(--sage)",
+  amber: "var(--amber)",
+  violet: "var(--violet)",
+  danger: "var(--danger)",
+};
+const handyColor = computed(() => HANDY_COLORS[cfg.value.color] ?? HANDY_COLORS.auto!);
+
 /** 面板 / 菜单是否从探头形态展开：Handy 保持探头位姿原地不动，身体仍被
     屏幕边缘裁掉，卡片朝桌面内侧展开（后端 peek_docked_layout 配合）。 */
 const fromPeek = computed(() =>
@@ -496,7 +507,7 @@ onBeforeUnmount(() => {
   <div
     class="hud-root"
     :class="[shape, `edge-${edge}`, { departing, hidden, 'from-peek': fromPeek, 'no-pop': noPeekPop }]"
-    :style="{ '--s': s, '--lift': panelLift, '--eye-x': eye.x, '--eye-y': eye.y, '--shake': `${shakeAngle}deg` }"
+    :style="{ '--s': s, '--lift': panelLift, '--eye-x': eye.x, '--eye-y': eye.y, '--shake': `${shakeAngle}deg`, '--handy-color': handyColor }"
     @pointerenter="onEnter"
     @pointerleave="onLeave"
     @pointerdown.capture="armStealth"
@@ -613,7 +624,9 @@ onBeforeUnmount(() => {
 .handy-lean {
   transform-origin: 50% 100%;
   cursor: default;
-  /* 悬停反馈：身体（不含眼睛）缓缓染上鼠尾草绿，离开时缓缓褪回。 */
+  /* 身体颜色来自设置的色板预设（--handy-color，默认墨色）；悬停仍染主题
+     强调色，离开缓缓褪回——设置改色时也走这段过渡，渐变换色。 */
+  color: var(--handy-color, var(--ink));
   transition: color .35s var(--ease-out);
 }
 .handy-lean:hover { color: var(--sage); }

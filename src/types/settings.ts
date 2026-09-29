@@ -28,6 +28,8 @@ export interface HudConfig {
   /** 隐匿模式：超过设定延迟后淡出，光标靠近时再唤醒。 */
   stealth: boolean;
   stealthDelaySecs: number;
+  /** Handy 身体颜色：应用色板预设名，auto = 跟随主题墨色。 */
+  color: "auto" | "sage" | "amber" | "violet" | "danger";
 }
 
 export interface MainWindowConfig {
@@ -87,5 +89,6 @@ export const DEFAULT_SETTINGS: HandySettings = {
     snapToEdge: false,
     stealth: false,
     stealthDelaySecs: 15,
+    color: "auto",
   },
 };

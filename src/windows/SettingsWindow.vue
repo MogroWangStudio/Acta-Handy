@@ -94,6 +94,15 @@ const LANGUAGE_OPTIONS = [
   { value: "en", label: "English" },
 ];
 
+// Handy 身体颜色：应用色板预设（与设计令牌同名），auto 跟随主题墨色。
+const COLOR_OPTIONS = computed(() => [
+  { value: "auto", label: t("colorAuto") },
+  { value: "sage", label: t("colorSage") },
+  { value: "amber", label: t("colorAmber") },
+  { value: "violet", label: t("colorViolet") },
+  { value: "danger", label: t("colorClay") },
+]);
+
 async function save(): Promise<void> {
   await persistSettings(store.settings);
 }
@@ -378,6 +387,10 @@ onBeforeUnmount(() => {
                 />
                 <b class="scale-pct">{{ Math.round(store.settings.hud.scale * 100) }}%</b>
               </span>
+            </div>
+            <div class="row">
+              <span class="row-copy"><b>{{ t("hudColor") }}</b><small>{{ t("hudColorDesc") }}</small></span>
+              <SelectMenu v-model="store.settings.hud.color" :options="COLOR_OPTIONS" @update:model-value="save" />
             </div>
             <div class="row">
               <span class="row-copy"><b>{{ t("alwaysOnTop") }}</b><small>{{ t("hudAlwaysOnTopDesc") }}</small></span>

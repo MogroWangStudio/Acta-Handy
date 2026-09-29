@@ -23,7 +23,7 @@ function mockSettings(): HandySettings {
     window: { x: null, y: null, width: 940, height: 640 },
     todoWidget: { enabled: true, x: null, y: null, width: 300, height: 360, opacity: 1, alwaysOnTop: false, showCompleted: true, snapToEdge: false },
     notesWidget: { enabled: false, x: null, y: null, width: 300, height: 380, opacity: 1, alwaysOnTop: false, showCompleted: false, snapToEdge: false },
-    hud: { enabled: true, x: null, y: null, alwaysOnTop: true, scale: 1, snapToEdge: snap, stealth: false, stealthDelaySecs: 15 },
+    hud: { enabled: true, x: null, y: null, alwaysOnTop: true, scale: 1, snapToEdge: snap, stealth: false, stealthDelaySecs: 15, color: "auto" },
   };
 }
 

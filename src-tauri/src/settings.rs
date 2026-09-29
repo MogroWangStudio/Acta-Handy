@@ -105,6 +105,8 @@ pub struct HudConfig {
     /// comes near again.
     pub stealth: bool,
     pub stealth_delay_secs: u32,
+    /// Handy 的身体颜色：应用色板里的预设名（auto = 跟随主题墨色）。
+    pub color: String,
 }
 
 impl Default for HudConfig {
@@ -118,6 +120,7 @@ impl Default for HudConfig {
             snap_to_edge: false,
             stealth: false,
             stealth_delay_secs: 15,
+            color: "auto".to_string(),
         }
     }
 }
@@ -146,6 +149,10 @@ impl HandySettings {
         }
         self.hud.scale = self.hud.scale.clamp(0.2, 1.5);
         self.hud.stealth_delay_secs = self.hud.stealth_delay_secs.clamp(5, 600);
+        // 颜色只认色板白名单：前端不认识的值一律回到跟随主题。
+        if !matches!(self.hud.color.as_str(), "sage" | "amber" | "violet" | "danger") {
+            self.hud.color = "auto".to_string();
+        }
         self.window.width = self.window.width.clamp(560.0, 2560.0);
         self.window.height = self.window.height.clamp(420.0, 1600.0);
         self
