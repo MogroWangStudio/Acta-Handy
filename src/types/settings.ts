@@ -1,6 +1,20 @@
 /** Handy's own settings, mirrored from src-tauri/src/settings.rs. */
 
-export type ThemeChoice = "auto" | "light" | "dark";
+/** 主题：auto 跟随系统（浅 sage / 深 mono-dark），其余为与 Acta 相同的色板。 */
+export type ThemeChoice =
+  | "auto"
+  | "sage"
+  | "eye-yellow"
+  | "mono-light"
+  | "mono-dark"
+  | "blue-yellow"
+  | "forest-mist"
+  | "sunset-coral"
+  | "candy-pop"
+  | "mws-light"
+  | "mws-dark"
+  | "neon-ocean"
+  | "aurora-night";
 export type LanguageChoice = "zh" | "en";
 
 export interface WidgetConfig {

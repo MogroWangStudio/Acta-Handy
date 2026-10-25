@@ -21,7 +21,7 @@ export function folderName(folder: ActaFolder | undefined | null): string {
 export function folderColor(folder: ActaFolder | undefined | null): string {
   const raw = folder?.color;
   if (raw && /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(raw)) {
-    return raw.length === 5
+    return raw.length === 4
       ? `#${raw[1]}${raw[1]}${raw[2]}${raw[2]}${raw[3]}${raw[3]}`
       : `#${raw.slice(1, 7)}`;
   }

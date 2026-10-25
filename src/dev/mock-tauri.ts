@@ -312,7 +312,7 @@ export function installMock(): void {
       const id = nextCallbackId++;
       callbacks.set(id, cb);
       window.addEventListener("mock-event", ((e: CustomEvent) => {
-        if (["settings-changed", "acta-data-changed", "hud-menu", "hud-anim", "hud-gaze", "hud-wake", "hud-scale"].includes(e.detail.event)) {
+        if (["settings-changed", "acta-data-changed", "hud-panel", "hud-menu", "hud-anim", "hud-gaze", "hud-wake", "hud-scale"].includes(e.detail.event)) {
           cb({ event: e.detail.event, id, payload: e.detail.payload });
         }
       }) as EventListener);

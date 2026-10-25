@@ -17,11 +17,12 @@ import {
 } from "../lib/api";
 import AppIcon from "../components/AppIcon.vue";
 import LogoWordmark from "../components/LogoWordmark.vue";
+import RangeSlider from "../components/RangeSlider.vue";
 import SelectMenu from "../components/SelectMenu.vue";
 import type { IconName } from "../types/icons";
 import type { HistoryEntry } from "../types/history";
 
-const APP_VERSION = "0.10.0";
+const APP_VERSION = "1.0.0";
 
 type SectionId = "data" | "todoWidget" | "notesWidget" | "hud" | "general" | "about";
 const active = ref<SectionId>("data");
@@ -72,10 +73,21 @@ const STEALTH_DELAYS = [
 const intervalOptions = computed(() => INTERVALS.map((o) => ({ value: o.value, label: o.label() })));
 const stealthDelayOptions = computed(() => STEALTH_DELAYS.map((o) => ({ value: o.value, label: o.label() })));
 
+// 主题：跟随系统 + 与 Acta 相同的十二套色板（设置里的主题名与 Acta 一一对应）。
 const THEME_OPTIONS = computed(() => [
   { value: "auto", label: t("themeAuto") },
-  { value: "light", label: t("themeLight") },
-  { value: "dark", label: t("themeDark") },
+  { value: "sage", label: t("themeSage") },
+  { value: "eye-yellow", label: t("themeEyeYellow") },
+  { value: "mono-light", label: t("themeMonoLight") },
+  { value: "mono-dark", label: t("themeMonoDark") },
+  { value: "blue-yellow", label: t("themeBlueYellow") },
+  { value: "forest-mist", label: t("themeForestMist") },
+  { value: "sunset-coral", label: t("themeSunsetCoral") },
+  { value: "candy-pop", label: t("themeCandyPop") },
+  { value: "mws-light", label: t("themeMwsLight") },
+  { value: "mws-dark", label: t("themeMwsDark") },
+  { value: "neon-ocean", label: t("themeNeonOcean") },
+  { value: "aurora-night", label: t("themeAuroraNight") },
 ]);
 
 const HUD_SCALE_MIN = 0.2;
@@ -126,6 +138,8 @@ async function chooseFolder(): Promise<void> {
   if (!picked) return;
   store.settings.dataFolder = picked;
   await save();
+  // 历史按数据文件夹归档：换了数据源就换一份历史，不再停留上一个文件夹的记录。
+  await loadHistory();
 }
 
 async function reload(): Promise<void> {
@@ -332,7 +346,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="row">
               <span class="row-copy"><b>{{ t("opacity") }}</b><small>{{ t("opacityDesc") }}</small></span>
-              <input v-model.number="store.settings.todoWidget.opacity" class="slider" type="range" min="0.3" max="1" step="0.05" @change="save" />
+              <RangeSlider v-model="store.settings.todoWidget.opacity" class="slider" :min="0.3" :max="1" :step="0.05" @change="save" />
             </div>
             <div class="row">
               <span class="row-copy"><b>{{ t("alwaysOnTop") }}</b><small>{{ t("alwaysOnTopDesc") }}</small></span>
@@ -362,7 +376,7 @@ onBeforeUnmount(() => {
             </div>
             <div class="row">
               <span class="row-copy"><b>{{ t("opacity") }}</b><small>{{ t("opacityDesc") }}</small></span>
-              <input v-model.number="store.settings.notesWidget.opacity" class="slider" type="range" min="0.3" max="1" step="0.05" @change="save" />
+              <RangeSlider v-model="store.settings.notesWidget.opacity" class="slider" :min="0.3" :max="1" :step="0.05" @change="save" />
             </div>
             <div class="row">
               <span class="row-copy"><b>{{ t("alwaysOnTop") }}</b><small>{{ t("alwaysOnTopDesc") }}</small></span>
@@ -389,13 +403,12 @@ onBeforeUnmount(() => {
             <div class="row">
               <span class="row-copy"><b>{{ t("hudSize") }}</b><small>{{ t("hudSizeDesc") }}</small></span>
               <span class="scale-row">
-                <input
-                  v-model.number="store.settings.hud.scale"
+                <RangeSlider
+                  v-model="store.settings.hud.scale"
                   class="slider"
-                  type="range"
                   :min="HUD_SCALE_MIN"
                   :max="HUD_SCALE_MAX"
-                  step="0.05"
+                  :step="0.05"
                   @input="previewHudScale"
                   @change="save"
                 />
@@ -587,7 +600,7 @@ onBeforeUnmount(() => {
 
 .mono { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.slider { width: 170px; accent-color: var(--sage); }
+.slider { width: 170px; }
 
 /* Handy 大小：无极滑块 + 当前百分比的组合行。 */
 .scale-row { display: flex; align-items: center; gap: 10px; }

@@ -124,8 +124,11 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   border-radius: 50%;
   background: var(--white);
   box-shadow: 0 1px 2px rgba(24, 28, 23, .25);
-  transition: transform .3s var(--ease-out);
+  /* 拨杆是弹性物理：带一点过冲的 spring 曲线，拨过去时轻轻回弹。 */
+  transition: transform .34s var(--ease-spring), width .16s ease;
 }
+/* 按住时拨杆被指尖捏住拉宽，松手弹回——反馈在按下的一瞬。 */
+.switch:active::after { width: 16px; }
 .switch[aria-checked="true"] { background: var(--sage); }
 .switch[aria-checked="true"]::after { transform: translateX(15px); }
 .switch:focus-visible { outline: 2px solid color-mix(in srgb, var(--sage) 35%, transparent); outline-offset: 2px; }
@@ -146,9 +149,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-weight: 650;
   transition: background .15s ease, transform .1s ease-out, box-shadow .18s ease;
 }
-.settings-button:hover { background: #30362f; }
+/* 悬停色由墨色与纸色混合派生：浅色主题下变亮、深色主题下变暗，
+   十二套主题全部自动适配，不再有硬编码色。 */
+.settings-button:hover { background: color-mix(in srgb, var(--ink) 86%, var(--paper)); }
 .settings-button:active { transform: scale(.97); transition-duration: .06s; }
-html[data-handy-theme="dark"] .settings-button:hover { background: #d6d6d6; color: var(--sidebar); }
 .settings-button.secondary {
   border: 1px solid var(--line);
   background: var(--white);

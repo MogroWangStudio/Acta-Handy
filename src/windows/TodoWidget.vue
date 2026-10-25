@@ -169,7 +169,7 @@ async function reload(): Promise<void> {
   margin-top: 4px;
   border-bottom: 1px solid rgba(47, 52, 45, .07);
 }
-html[data-handy-theme="dark"] .widget-section-label { border-bottom-color: rgba(255, 255, 255, .07); }
+html[data-handy-scheme="dark"] .widget-section-label { border-bottom-color: rgba(255, 255, 255, .07); }
 
 .widget-nofilter {
   padding: 14px 2px;

@@ -69,6 +69,6 @@ const items = computed(() => {
 }
 .chip:hover { background: color-mix(in srgb, var(--sage-2) 55%, transparent); }
 .chip.on { background: var(--sage-2); color: var(--sage); }
-html[data-handy-theme="dark"] .chip.on { color: var(--ink); }
+html[data-handy-scheme="dark"] .chip.on { color: var(--ink); }
 .chip i { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
 </style>

@@ -190,7 +190,7 @@ async function newNote(): Promise<void> {
   font-size: 8.5px;
   font-weight: 700;
 }
-html[data-handy-theme="dark"] .panel-tabs button.active { background: var(--sage-2); }
+html[data-handy-scheme="dark"] .panel-tabs button.active { background: var(--sage-2); }
 
 .panel-body {
   flex: 1;
@@ -256,7 +256,7 @@ html[data-handy-theme="dark"] .panel-tabs button.active { background: var(--sage
 .panel-new:active { transform: scale(.96); }
 .panel-new:disabled { opacity: .4; pointer-events: none; }
 .panel-new svg { width: 11px; height: 11px; }
-html[data-handy-theme="dark"] .panel-new { color: var(--ink); }
+html[data-handy-scheme="dark"] .panel-new { color: var(--ink); }
 
 .panel-note {
   padding: 9px 2px;
@@ -267,7 +267,7 @@ html[data-handy-theme="dark"] .panel-new { color: var(--ink); }
 }
 .panel-note:hover { background: color-mix(in srgb, var(--sage-2) 45%, transparent); }
 .panel-note:last-child { border-bottom: 0; }
-html[data-handy-theme="dark"] .panel-note { border-bottom-color: rgba(255, 255, 255, .07); }
+html[data-handy-scheme="dark"] .panel-note { border-bottom-color: rgba(255, 255, 255, .07); }
 .panel-note h4 {
   margin: 0 0 3px;
   font: 600 12px/1.35 var(--font-display);

@@ -184,7 +184,7 @@ async function openSettings(): Promise<void> {
 .new-note:hover { background: color-mix(in srgb, var(--sage-2) 70%, var(--sage) 12%); }
 .new-note:active { transform: scale(.96); }
 .new-note:disabled { opacity: .4; pointer-events: none; }
-html[data-handy-theme="dark"] .new-note { color: var(--ink); }
+html[data-handy-scheme="dark"] .new-note { color: var(--ink); }
 
 .editor-bar { padding-bottom: 0; }
 .back-button {
@@ -217,7 +217,7 @@ html[data-handy-theme="dark"] .new-note { color: var(--ink); }
 }
 .note-row:hover { background: color-mix(in srgb, var(--sage-2) 45%, transparent); }
 .note-row:last-child { border-bottom: 0; }
-html[data-handy-theme="dark"] .note-row { border-bottom-color: rgba(255, 255, 255, .07); }
+html[data-handy-scheme="dark"] .note-row { border-bottom-color: rgba(255, 255, 255, .07); }
 
 .note-title {
   margin: 0 0 4px;

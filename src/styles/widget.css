@@ -65,7 +65,7 @@
   font-weight: 700;
   letter-spacing: .02em;
 }
-html[data-handy-theme="dark"] .widget-count { color: var(--ink); }
+html[data-handy-scheme="dark"] .widget-count { color: var(--ink); }
 
 .widget-progress { flex: 0 0 auto; margin: 0 16px 4px; }
 

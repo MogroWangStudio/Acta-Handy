@@ -140,8 +140,14 @@ impl HandySettings {
     /// push a window off-screen or busy-loop the watcher.
     pub fn sanitized(mut self) -> Self {
         self.refresh_interval_secs = self.refresh_interval_secs.clamp(5, 3600);
+        // 主题白名单与 Acta 的主题一一对应；0.x 的 light / dark 迁移到
+        // 对应色板（视觉不变），不认识的值回到跟随系统。
         self.theme = match self.theme.as_str() {
-            "light" | "dark" => self.theme,
+            "light" => "sage".to_string(),
+            "dark" => "mono-dark".to_string(),
+            "sage" | "eye-yellow" | "mono-light" | "mono-dark" | "blue-yellow" | "forest-mist"
+            | "sunset-coral" | "candy-pop" | "mws-light" | "mws-dark" | "neon-ocean"
+            | "aurora-night" => self.theme,
             _ => "auto".to_string(),
         };
         self.language = match self.language.as_str() {

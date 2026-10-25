@@ -118,6 +118,7 @@ onBeforeUnmount(() => {
   left: 0;
   z-index: 60;
   min-width: 100%;
+  max-height: min(302px, calc(100vh - 24px));
   margin: 0;
   padding: 4px;
   list-style: none;
@@ -126,6 +127,7 @@ onBeforeUnmount(() => {
   background: var(--white);
   box-shadow: var(--shadow-pop);
   transform-origin: top;
+  overflow-y: auto;
 }
 .select-list.up { top: auto; bottom: calc(100% + 5px); transform-origin: bottom; }
 

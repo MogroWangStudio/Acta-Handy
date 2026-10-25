@@ -1,16 +1,51 @@
 import type { HandySettings, ThemeChoice } from "../types/settings";
 
+/** 与 Acta 相同的主题清单（sage 为 Acta 的 CSS 兜底色板，即 Handy 0.x 的浅色）。 */
+export const THEMES: readonly ThemeChoice[] = [
+  "sage",
+  "eye-yellow",
+  "mono-light",
+  "mono-dark",
+  "blue-yellow",
+  "forest-mist",
+  "sunset-coral",
+  "candy-pop",
+  "mws-light",
+  "mws-dark",
+  "neon-ocean",
+  "aurora-night",
+];
+
+const DARK_THEMES = new Set<string>(["mono-dark", "mws-dark", "neon-ocean", "aurora-night"]);
+
+/** 跟随系统时的落点：浅色用默认色板，深色用 Acta 的黑白深色（与 0.x 一致）。 */
+const AUTO_LIGHT = "sage";
+const AUTO_DARK = "mono-dark";
+
 const QUERY = "(prefers-color-scheme: dark)";
 let media: MediaQueryList | null = null;
 let choice: ThemeChoice = "auto";
 
+/** 0.x 的 light / dark 在前端同样迁移（后端 sanitized 已迁移，mock 预览走这里）。 */
+function normalize(next: string): string {
+  if (next === "light") return AUTO_LIGHT;
+  if (next === "dark") return AUTO_DARK;
+  return next;
+}
+
 function apply(): void {
-  const dark = choice === "dark" || (choice === "auto" && media?.matches);
-  document.documentElement.dataset.handyTheme = dark ? "dark" : "light";
+  const theme =
+    choice === "auto"
+      ? media?.matches
+        ? AUTO_DARK
+        : AUTO_LIGHT
+      : normalize(choice);
+  document.documentElement.dataset.handyTheme = theme;
+  document.documentElement.dataset.handyScheme = DARK_THEMES.has(theme) ? "dark" : "light";
 }
 
 export function applyTheme(next: ThemeChoice): void {
-  choice = next;
+  choice = THEMES.includes(next) || next === "auto" ? next : "auto";
   if (!media) {
     media = window.matchMedia(QUERY);
     media.addEventListener("change", apply);

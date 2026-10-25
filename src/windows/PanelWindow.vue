@@ -12,6 +12,7 @@ import { initStore, store } from "../lib/store";
 import { commitHudScale, onHudPanel, setHudEnabled, setHudPanel, setHudScale } from "../lib/api";
 import { t } from "../lib/i18n";
 import HudPanel from "../components/HudPanel.vue";
+import RangeSlider from "../components/RangeSlider.vue";
 
 const win = getCurrentWindow();
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -106,13 +107,12 @@ onBeforeUnmount(() => {
     <div v-else-if="kind === 'menu'" class="menu-card">
       <p class="menu-title">{{ t("hudSize") }}</p>
       <div class="menu-row">
-        <input
-          v-model.number="liveScale"
+        <RangeSlider
+          v-model="liveScale"
           class="menu-slider"
-          type="range"
-          min="0.2"
-          max="1.5"
-          step="0.05"
+          :min="0.2"
+          :max="1.5"
+          :step="0.05"
           @input="onScaleInput"
           @change="onScaleCommit"
           @pointerup="onScaleCommit"
@@ -193,7 +193,7 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 .menu-row { display: flex; align-items: center; gap: 9px; }
-.menu-slider { flex: 1; min-width: 0; accent-color: var(--sage); }
+.menu-slider { flex: 1; min-width: 0; }
 .menu-pct {
   flex: 0 0 auto;
   min-width: 38px;

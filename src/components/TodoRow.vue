@@ -98,7 +98,7 @@ const hasMeta = computed(
 .todo-row.expandable { cursor: pointer; transition: background .15s ease; }
 .todo-row.expandable:hover { background: color-mix(in srgb, var(--sage-2) 45%, transparent); }
 .todo-row:last-child { border-bottom: 0; }
-html[data-handy-theme="dark"] .todo-row { border-bottom-color: rgba(255, 255, 255, .07); }
+html[data-handy-scheme="dark"] .todo-row { border-bottom-color: rgba(255, 255, 255, .07); }
 
 .todo-check {
   width: 18px;
@@ -119,7 +119,7 @@ html[data-handy-theme="dark"] .todo-row { border-bottom-color: rgba(255, 255, 25
 .todo-check svg { width: 11px; height: 11px; opacity: 0; transform: scale(.4) rotate(-18deg); transition: opacity .15s, transform .3s var(--ease-out); }
 .todo-check.on { background: var(--sage); border-color: var(--sage); }
 .todo-check.on svg { opacity: 1; transform: scale(1) rotate(0); }
-html[data-handy-theme="dark"] .todo-check.on { color: var(--sidebar); }
+html[data-handy-scheme="dark"] .todo-check.on { color: var(--sidebar); }
 
 /* 标题独占首行（最多两行），日期 / 优先级 / 子任务进度沉到第二行——窄卡片
    里右侧元信息列挤掉标题的问题不再发生。 */
@@ -186,7 +186,7 @@ html[data-handy-theme="dark"] .todo-check.on { color: var(--sidebar); }
 .task-check svg { width: 9px; height: 9px; opacity: 0; transform: scale(.4); transition: opacity .12s, transform .24s var(--ease-out); }
 .task-check.on { background: var(--sage); border-color: var(--sage); }
 .task-check.on svg { opacity: 1; transform: scale(1); }
-html[data-handy-theme="dark"] .task-check.on { color: var(--sidebar); }
+html[data-handy-scheme="dark"] .task-check.on { color: var(--sidebar); }
 .task-text {
   font-size: 11px;
   line-height: 1.45;
