@@ -31,12 +31,6 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 onMounted(async () => {
   await initStore();
-  shape.value = store.settings.hud.snapToEdge ? "peek" : "free";
-  // 让后端按当前形态重排一次，顺便拿到贴边方向。
-  const placement = await setHudMode(shape.value);
-  if (placement) {
-    edge.value = placement.side;
-  }
   void onHudWake(onCursorNear);
   void onHudAnim(onAnim);
   void onHudGaze(onGaze);
@@ -47,9 +41,10 @@ onMounted(async () => {
     panelOpen.value = shown;
     if (shown) armStealth();
   });
-  void setHudEyeWatch(true);
-  armStealth();
   void watchWindowMoves();
+  // 挂载时 Handy 可能是关闭的：不显示、不武装监控，等开关打开再启动。
+  // 此前这里无条件调用 setHudMode，后端会把已关闭的 Handy 显示出来。
+  if (cfg.value.enabled) void activate();
 });
 
 const cfg = computed(() => store.settings.hud);
@@ -250,6 +245,22 @@ async function openPanel(): Promise<void> {
 
 // --- 形态与设置联动 -----------------------------------------------------------
 
+/** 启动 Handy（首次挂载或从关闭态开启）：按设置摆好形态、同步贴边方向，
+    清掉可能残留的隐匿淡出与鼠标穿透，再武装隐匿与眼动。 */
+async function activate(): Promise<void> {
+  shape.value = cfg.value.snapToEdge ? "peek" : "free";
+  // 让后端按当前形态重排一次，顺便拿到贴边方向。
+  const placement = await setHudMode(shape.value);
+  if (placement) {
+    edge.value = placement.side;
+  }
+  slowFade.value = false;
+  hidden.value = false;
+  void win.setIgnoreCursorEvents(false).catch(() => undefined);
+  armStealth();
+  void setHudEyeWatch(true);
+}
+
 watch(
   () => cfg.value.snapToEdge,
   (snap) => {
@@ -261,9 +272,18 @@ watch(
 watch(
   () => cfg.value.enabled,
   (enabled) => {
-    // 关闭再开启时，窗口以自由 / 探头形态出现；眼动监控线程随隐藏退出，
-    // 重新可见后要再武装。
-    if (enabled) void setHudEyeWatch(true);
+    if (enabled) {
+      // 从关闭态开启：重新摆形态、清掉残留的隐匿淡出。此前只重开眼动，
+      // 内容若停在隐匿的 opacity:0（后端 show 落在已可见窗口上是空操作，
+      // 光标事件又被穿透挡住），开关打开也「看不见 Handy」。
+      void activate();
+    } else {
+      // 关闭：窗口由后端隐藏；本地计时与监控一并停掉，下次开启从干净状态出发。
+      if (stealthTimer) clearTimeout(stealthTimer);
+      if (watchTimer) clearTimeout(watchTimer);
+      void setHudCursorWatch(false);
+      void setHudEyeWatch(false);
+    }
   },
 );
 watch(() => cfg.value.stealth, () => armStealth());
@@ -327,7 +347,7 @@ function syncCursorWatch(): void {
 
 function armStealth(): void {
   if (stealthTimer) clearTimeout(stealthTimer);
-  if (animating.value || panelOpen.value) return; // 面板开着时不隐匿
+  if (!cfg.value.enabled || animating.value || panelOpen.value) return; // 关闭 / 动画 / 面板开着时不隐匿
   syncCursorWatch();
   if (hidden.value) return;
   if (!cfg.value.stealth || pointerInside.value) return;

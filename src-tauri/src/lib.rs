@@ -572,6 +572,12 @@ fn set_hud_mode(app: AppHandle, mode: String) -> Option<HudPlacement> {
     if HUD_ANIMATING.load(Ordering::SeqCst) {
         return None;
     }
+    // Handy 在设置中是关闭的：窗口必须保持隐藏。webview 的挂载与本命令
+    // 都可能早于/晚于开关状态，这里以设置文件为准——绝不因前端的一次
+    // 形态请求把已关闭的 Handy 显示出来。
+    if !settings::load_from_disk(&app).hud.enabled {
+        return None;
+    }
     let mode = if mode == "peek" { HudMode::Peek } else { HudMode::Free };
     apply_hud(&app, mode, false)
 }
