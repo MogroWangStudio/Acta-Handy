@@ -1514,8 +1514,22 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .tooltip("Acta Handy")
         .on_menu_event(|app, event| handle_tray_event(app, event.id().as_ref()));
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
+    #[cfg(target_os = "macos")]
+    {
+        // macOS 顶栏：Handy 剪影的模板图标（黑色 + alpha，图形与 HandyChar
+        // 同源，见 icons/tray.svg）。交给系统标记为 template——菜单栏按
+        // 深浅外观自动把剪影染成白色或黑色，浅色菜单栏不会被白色图标
+        // 隐形，深色菜单栏也不会只剩一团黑。解码失败退回彩色应用图标。
+        let silhouette = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")).ok();
+        if let Some(icon) = silhouette.clone().or_else(|| app.default_window_icon().cloned()) {
+            builder = builder.icon(icon).icon_as_template(silhouette.is_some());
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(icon) = app.default_window_icon() {
+            builder = builder.icon(icon.clone());
+        }
     }
     builder.build(app)?;
     Ok(())
