@@ -601,7 +601,11 @@ fn apply_hud(app: &AppHandle, mode: HudMode, restore: bool) -> Option<HudPlaceme
     };
 
     set_window_frame(&window, x, y, width, height, scale);
-    let _ = window.show();
+    // 同 apply_widget：可见时不重复 show，保存设置不再把 Handy 抢到最前；
+    // 隐匿淡出属于前端透明度，窗口仍算可见，唤醒路径不受影响。
+    if !window.is_visible().unwrap_or(false) {
+        let _ = window.show();
+    }
     HUD_MODE.store(mode.to_id(), Ordering::SeqCst);
     placement
 }
@@ -1194,7 +1198,12 @@ fn apply_widget(
     };
     let _ = window.set_position(pos);
     let _ = window.set_always_on_top(on_top);
-    let _ = window.show();
+    // 已可见的窗口不再重复 show()：macOS 上 show 会把窗口提到最前，设置窗口
+    // 里每保存一次设置（主题、刷新间隔……）都会把小组件顶到自己上面——
+    // 表现为设置窗口「失焦」、焦点跑去别的窗口。只有真正隐藏的窗口才需要现身。
+    if !window.is_visible().unwrap_or(false) {
+        let _ = window.show();
+    }
 }
 
 /// 设置窗口自身：恢复记忆的位置与大小（首次运行为默认 940×640）。

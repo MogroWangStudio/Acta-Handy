@@ -431,9 +431,10 @@ onBeforeUnmount(() => {
 <template>
   <div class="shell" :data-platform="platform">
     <div class="titlebar" data-tauri-drag-region>
-      <span class="brand"><LogoWordmark :height="28" /></span>
+      <!-- macOS：红绿灯由系统画在左侧，logo 让到右上；Windows：logo 在左、控件在右。 -->
       <span v-if="platform === 'darwin'" class="spacer" />
-      <div v-else class="window-controls">
+      <span class="brand"><LogoWordmark :height="28" /></span>
+      <div v-if="platform !== 'darwin'" class="window-controls">
         <button title="最小化" @click="minimize">
           <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.6 6h6.8" /></svg>
         </button>
@@ -460,7 +461,6 @@ onBeforeUnmount(() => {
         >
           <AppIcon :name="section.icon" :size="15" />
           <span>{{ section.label() }}</span>
-          <i />
         </button>
       </nav>
 
@@ -812,6 +812,12 @@ onBeforeUnmount(() => {
   grid-template-rows: 52px minmax(0, 1fr);
   background: var(--sidebar);
 }
+/* macOS：窗口透明、系统不裁剪内容，系统级圆角由内容自己画（半径与系统窗口一致）。
+   Windows 保持方角，由系统边框负责外形。 */
+.shell[data-platform="darwin"] {
+  border-radius: 10px;
+  overflow: hidden;
+}
 
 /* --- titlebar --- */
 .titlebar {
@@ -820,11 +826,16 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid rgba(42, 48, 41, .08);
   color: var(--ink);
 }
-.shell[data-platform="darwin"] .titlebar { padding-left: 84px; }
 .shell[data-platform="win32"] .titlebar { padding-left: 18px; }
+.shell[data-platform="darwin"] .titlebar { padding-right: 14px; }
 .brand { display: inline-flex; color: var(--ink); }
 .brand :deep(svg) { display: block; }
 .spacer { flex: 1; align-self: stretch; }
+
+/* 拖动区域 = 整条顶栏：装饰性子元素放行鼠标事件，点击落到顶栏自身的
+   data-tauri-drag-region 上（Tauri 只认命中元素带该属性）。右侧的
+   系统按钮（Windows）保持可点。 */
+.brand, .spacer { pointer-events: none; }
 
 .window-controls { margin-left: auto; display: flex; align-self: stretch; }
 .window-controls button {
@@ -885,8 +896,6 @@ onBeforeUnmount(() => {
 .side-nav button:hover { color: var(--ink); background: color-mix(in srgb, var(--white) 55%, transparent); transform: translateX(2px); }
 .side-nav button.active { background: var(--white); color: var(--ink); box-shadow: 0 1px 3px rgba(47, 50, 43, .05); }
 .side-nav button.active svg { color: var(--sage); }
-.side-nav i { margin-left: auto; width: 5px; height: 5px; border-radius: 50%; background: var(--sage); opacity: 0; }
-.side-nav button.active i { opacity: 1; }
 
 .content { min-width: 0; overflow: hidden auto; padding: 34px 40px 42px; background: var(--paper); }
 
