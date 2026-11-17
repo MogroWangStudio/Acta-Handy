@@ -1,24 +1,22 @@
+# 按需的构建验证：手动触发，只确认当前分支能产出三份平台压缩包，产物留在
+# Actions 的 Artifacts 里——不发 Release、不打 tag、不写版本号。
+#
+# 推送 main 后自动发版由 release.yml 负责（读 tauri.conf.json 的版本号决定
+# 正式版 / Pre-Release）。原先「推送到 main 就自动构建」的触发已移除，避免与
+# release.yml 重复跑一遍同样的三份构建。
+
 name: Build
 
 on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-    tags:
-      - "v*"
+  workflow_dispatch: {}
 
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
-# 每次推送到 main 都会自动构建两平台产物（CI）：构建结果以 artifact 形式
-# 上传，名字带 run number 保证唯一（upload-artifact v4 不允许同名重复）。
-# 推送 v* 标签时走同一条流水线，产物保持正式命名并附加到 GitHub Release。
-
 jobs:
-  windows-portable:
-    name: Windows x64 portable exe
+  windows-x64:
+    name: Windows x64 portable
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,42 +33,43 @@ jobs:
       - name: Read version
         id: ver
         shell: bash
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(node -p "require('./src-tauri/tauri.conf.json').version")" >> "$GITHUB_OUTPUT"
       - name: Install dependencies
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
       - name: Build portable exe
         run: npm run windows:portable
-      - name: Collect portable exe
-        id: collect
+      - name: Collect exe into zip
+        shell: pwsh
         env:
           VERSION: ${{ steps.ver.outputs.version }}
-        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          # 与 release.yml 同构的产物：ActaHandy-<版本>-windows-x64.zip，包内单个 ActaHandy.exe。
+          New-Item -ItemType Directory -Force -Path dist/payload | Out-Null
           $exe = Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release" -Filter *.exe |
             Sort-Object Length -Descending | Select-Object -First 1
           if (-not $exe) { throw "No portable exe found in release output." }
-          # CI 构建的产物名带 run number；标签发布保持正式命名。
-          $suffix = if ($env:GITHUB_REF_TYPE -eq "tag") { "" } else { "-ci-$($env:GITHUB_RUN_NUMBER)" }
-          $name = "ActaHandy-$($env:VERSION)-windows-x64-portable$suffix"
-          Copy-Item $exe.FullName "dist/$name.exe"
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "name=$name"
+          Copy-Item $exe.FullName "dist/payload/ActaHandy.exe"
+          Compress-Archive -Path "dist/payload/ActaHandy.exe" `
+            -DestinationPath "dist/ActaHandy-$($env:VERSION)-windows-x64.zip" -Force
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.collect.outputs.name }}
-          path: dist/*.exe
+          name: ActaHandy-${{ steps.ver.outputs.version }}-windows-x64
+          path: dist/ActaHandy-*-windows-x64.zip
           if-no-files-found: error
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/ActaHandy-*-windows-x64-portable.exe
 
-  macos-arm64:
-    name: macOS arm64 dmg
+  macos:
+    name: macOS ${{ matrix.arch }} dmg
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-apple-darwin
+          - arch: x64
+            target: x86_64-apple-darwin
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -79,47 +78,41 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.target }}
       - name: Read version
         id: ver
         shell: bash
-        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(node -p "require('./src-tauri/tauri.conf.json').version")" >> "$GITHUB_OUTPUT"
       - name: Install dependencies
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
-      - name: Build dmg
-        run: npm run macos:build
-      - name: Collect dmg
-        id: collect
-        env:
-          VERSION: ${{ steps.ver.outputs.version }}
+      - name: Build app bundle
+        run: npx tauri build --bundles app --target ${{ matrix.target }}
+      - name: Strip quarantine from app bundle
         shell: bash
         run: |
-          mkdir -p dist
-          dmg=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name "*.dmg" | head -n 1)
-          if [ -z "$dmg" ]; then
-            echo "No dmg found in bundle output." >&2
-            exit 1
-          fi
-          # CI 构建的产物名带 run number；标签发布保持正式命名。
-          suffix=""
-          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
-            suffix="-ci-$GITHUB_RUN_NUMBER"
-          fi
-          name="ActaHandy-${VERSION}-macos-arm64${suffix}"
-          cp "$dmg" "dist/$name.dmg"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
+          app_path=$(ls -d src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app | head -n 1)
+          sudo xattr -r -d com.apple.quarantine "$app_path" 2>/dev/null || true
+      - name: Package dmg with unlock script
+        shell: bash
+        run: bash scripts/dmg/package-dmg.sh "${{ steps.ver.outputs.version }}" "${{ matrix.arch }}"
+      - name: Collect dmg into zip
+        shell: bash
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          # 与 release.yml 同构的产物：ActaHandy-<版本>-macos-<架构>.zip，包内单个 dmg。
+          cd dist
+          dmg="ActaHandy-${VERSION}-macos-${ARCH}.dmg"
+          zip -q "ActaHandy-${VERSION}-macos-${ARCH}.zip" "$dmg"
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.collect.outputs.name }}
-          path: dist/*.dmg
+          name: ActaHandy-${{ steps.ver.outputs.version }}-macos-${{ matrix.arch }}
+          path: dist/ActaHandy-*-macos-*.zip
           if-no-files-found: error
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/ActaHandy-*-macos-arm64.dmg

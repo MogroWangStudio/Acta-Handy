@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ActaData, ActaNote, ActaTodo } from "../types/acta";
 import type { HandySettings } from "../types/settings";
@@ -171,4 +172,78 @@ export function emitHudPanelKeep(): void {
     面板的 pointerenter 会立刻取消计时，跨过窗口缝隙不误收。 */
 export function emitHudPanelAway(): void {
   void emit("hud-panel-away");
+}
+
+// --- 应用内更新 --------------------------------------------------------------
+// 后端在 updater.rs：查 Release（按通道过滤）→ 下载（按下载源拼链接）→
+// 写任务单并拉起安装进程换包。版本号由后端给出，前端不硬编码。
+
+export interface AppInfo {
+  version: string;
+  prerelease: boolean;
+}
+
+export interface UpdateInfo {
+  version: string;
+  notes: string;
+  assetName: string;
+  size: number;
+  url: string;
+  prerelease: boolean;
+}
+
+/** 一条下载链路的测速结果；失败时 error 非空。 */
+export interface RouteProbe {
+  label: string;
+  ok: boolean;
+  status: number;
+  bytes: number;
+  elapsedMs: number;
+  kbps: number;
+  error: string;
+}
+
+export interface SourceProbe {
+  sample: string;
+  direct: RouteProbe;
+  proxy: RouteProbe;
+}
+
+export function readAppInfo(): Promise<AppInfo> {
+  return invoke<AppInfo>("app_info");
+}
+
+/** 检查更新；没有比当前版本更新的版本时返回 null。 */
+export function checkAppUpdate(channel: HandySettings["updateChannel"]): Promise<UpdateInfo | null> {
+  return invoke<UpdateInfo | null>("check_app_update", { channel });
+}
+
+/** 下载更新包，返回本地路径；进度经 onDownloadProgress 广播。 */
+export function downloadAppUpdate(
+  url: string,
+  assetName: string,
+  expectedSize: number,
+  source: HandySettings["downloadSource"],
+): Promise<string> {
+  return invoke<string>("download_app_update", { url, assetName, expectedSize, source });
+}
+
+/** 写任务单并拉起安装进程；调用方随后应退出应用以完成换包。 */
+export function applyUpdate(payload: string, version: string): Promise<boolean> {
+  return invoke<boolean>("apply_update", { payload, version });
+}
+
+/** 两条下载链路各读 1 MB 计时。 */
+export function probeUpdateSources(channel: HandySettings["updateChannel"]): Promise<SourceProbe> {
+  return invoke<SourceProbe>("probe_update_sources", { channel });
+}
+
+export interface DownloadProgress {
+  received: number;
+  total: number;
+  percent: number;
+}
+
+export function onDownloadProgress(cb: (progress: DownloadProgress) => void): Promise<UnlistenFn> {
+  return listen<DownloadProgress>("update://download", (e) => cb(e.payload));
 }

@@ -26,6 +26,8 @@ function mockSettings(): HandySettings {
     todoWidget: { enabled: true, x: null, y: null, width: 300, height: 360, opacity: 1, alwaysOnTop: false, showCompleted: true, snapToEdge: false },
     notesWidget: { enabled: false, x: null, y: null, width: 300, height: 380, opacity: 1, alwaysOnTop: false, showCompleted: false, snapToEdge: false },
     hud: { enabled: true, x: null, y: null, alwaysOnTop: true, scale: 1, snapToEdge: snap, stealth: false, stealthDelaySecs: 15, color: "auto" },
+    updateChannel: "beta",
+    downloadSource: "github",
   };
 }
 
@@ -141,7 +143,10 @@ const data: ActaData = {
 };
 
 type EventCallback = (evt: { event: string; id: number; payload: unknown }) => void;
-const callbacks = new Map<number, EventCallback>();
+/** 回调 id → 它订阅的事件名。事件名在 plugin:event|listen 时才传入，所以先登记
+    回调、等 listen 到达再补上——不按事件名分发会让每个监听器收到全部事件
+    （例如进度事件会把设置对象覆盖成 {received,total,percent}）。 */
+const callbacks = new Map<number, { cb: EventCallback; event: string }>();
 let nextCallbackId = 1;
 
 const settings = mockSettings();
@@ -281,8 +286,61 @@ function invoke(cmd: string, args: Record<string, unknown>): unknown {
     case "show_window":
     case "quit_app":
       return null;
-    case "plugin:event|listen":
-      return nextCallbackId++;
+    // 更新流程的演示：?latest 预览「已是最新」，默认演示发现新版本 → 下载 → 读秒。
+    case "app_info":
+      return { version: "1.1.0-beta1", prerelease: true };
+    case "check_app_update": {
+      const upToDate = new URLSearchParams(location.search).has("latest");
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          resolve(
+            upToDate
+              ? null
+              : {
+                  version: "1.2.0-beta2",
+                  notes: "小组件支持按标签筛选；Handy 探头时会跟着鼠标转头。\n下载源测速改为两条链路各读 1 MB。",
+                  assetName: "ActaHandy-1.2.0-beta2-macos-arm64.zip",
+                  size: 12_845_056,
+                  url: "https://github.com/MogroWangStudio/Acta-Handy/releases/download/v1.2.0-beta2/ActaHandy-1.2.0-beta2-macos-arm64.zip",
+                  prerelease: true,
+                },
+          );
+        }, 700);
+      });
+    }
+    case "download_app_update": {
+      const total = Number(args.expectedSize) || 12_845_056;
+      return new Promise((resolve) => {
+        let received = 0;
+        const timer = setInterval(() => {
+          received = Math.min(total, received + total / 12);
+          fire("update://download", { received, total, percent: Math.round((received / total) * 100) });
+          if (received >= total) {
+            clearInterval(timer);
+            setTimeout(() => resolve("/tmp/acta-handy-update/mock.zip"), 320);
+          }
+        }, 160);
+      });
+    }
+    case "apply_update":
+      return Promise.resolve(true);
+    case "probe_update_sources":
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          resolve({
+            sample: "https://github.com/MogroWangStudio/Acta-Handy/releases/download/v1.2.0-beta2/ActaHandy-1.2.0-beta2-macos-arm64.zip",
+            direct: { label: "GitHub Raw", ok: true, status: 200, bytes: 1_048_576, elapsedMs: 1240, kbps: 826, error: "" },
+            proxy: { label: "GitHub-Proxy", ok: true, status: 200, bytes: 1_048_576, elapsedMs: 680, kbps: 1506, error: "" },
+          });
+        }, 900);
+      });
+    case "plugin:event|listen": {
+      // listen() 会先 transformCallback 拿到 id，再把事件名带进 invoke。
+      const id = Number(args.handler);
+      const entry = callbacks.get(id);
+      if (entry) entry.event = String(args.event ?? "");
+      return id;
+    }
     case "plugin:event|unlisten":
       return null;
     case "plugin:window|is_maximized":
@@ -310,11 +368,11 @@ export function installMock(): void {
     metadata: { currentWindow: { label }, currentWebview: { label } },
     transformCallback: (cb: (evt: { event: string; id: number; payload: unknown }) => void) => {
       const id = nextCallbackId++;
-      callbacks.set(id, cb);
+      callbacks.set(id, { cb, event: "" });
       window.addEventListener("mock-event", ((e: CustomEvent) => {
-        if (["settings-changed", "acta-data-changed", "hud-panel", "hud-menu", "hud-anim", "hud-gaze", "hud-wake", "hud-scale"].includes(e.detail.event)) {
-          cb({ event: e.detail.event, id, payload: e.detail.payload });
-        }
+        const entry = callbacks.get(id);
+        if (!entry || entry.event !== e.detail.event) return;
+        entry.cb({ event: e.detail.event, id, payload: e.detail.payload });
       }) as EventListener);
       return id;
     },

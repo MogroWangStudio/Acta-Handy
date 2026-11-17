@@ -27,6 +27,10 @@ pub struct HandySettings {
     pub todo_widget: WidgetConfig,
     pub notes_widget: WidgetConfig,
     pub hud: HudConfig,
+    /// 更新通道：stable 只收正式版，beta 连预发布一起收。
+    pub update_channel: String,
+    /// 下载源：github = GitHub Raw 直链，proxy = GitHub-proxy 加速。
+    pub download_source: String,
 }
 
 impl Default for HandySettings {
@@ -46,6 +50,8 @@ impl Default for HandySettings {
             },
             notes_widget: WidgetConfig::default(),
             hud: HudConfig::default(),
+            update_channel: "stable".to_string(),
+            download_source: "github".to_string(),
         }
     }
 }
@@ -170,6 +176,15 @@ impl HandySettings {
         if !matches!(self.hud.color.as_str(), "sage" | "amber" | "violet" | "danger") {
             self.hud.color = "auto".to_string();
         }
+        // 更新通道与下载源同样只认白名单，未知值回到默认。
+        self.update_channel = match self.update_channel.as_str() {
+            "beta" => self.update_channel,
+            _ => "stable".to_string(),
+        };
+        self.download_source = match self.download_source.as_str() {
+            "proxy" => self.download_source,
+            _ => "github".to_string(),
+        };
         self.window.width = self.window.width.clamp(560.0, 2560.0);
         self.window.height = self.window.height.clamp(420.0, 1600.0);
         self

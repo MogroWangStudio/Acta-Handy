@@ -37,6 +37,8 @@ export const store = reactive<StoreState>({
     todoWidget: { enabled: false, x: null, y: null, width: 300, height: 360, opacity: 1, alwaysOnTop: false, showCompleted: false, snapToEdge: false },
     notesWidget: { enabled: false, x: null, y: null, width: 300, height: 380, opacity: 1, alwaysOnTop: false, showCompleted: false, snapToEdge: false },
     hud: { enabled: false, x: null, y: null, alwaysOnTop: true, scale: 1, snapToEdge: false, stealth: false, stealthDelaySecs: 15, color: "auto" },
+    updateChannel: "stable",
+    downloadSource: "github",
   },
   data: null,
   dataError: "",

@@ -1,0 +1,273 @@
+# 发布流水线：推送到 main 后按版本号自动发版。
+#
+# 版本号只写在 src-tauri/tauri.conf.json（package.json / Cargo.toml 与它同步
+# 是发版操作的一部分），流水线读它来决定整个发布，分三步：
+#
+#   1. prepare —— 检查当前版本，据此决定要发的 Release 与 tag：
+#      · 纯数字版本（x.y.z）    → 正式 Release，标记 latest；
+#      · 带后缀版本（x.y.z-betax）→ Pre-Release，标记 prerelease。
+#      判定规则与应用内更新器（updater.rs 的 compare_release_tags）同源：
+#      tag 含 '-' 即预发布。
+#   2. 三个平台的构建 —— 各自产出一个压缩包，名字固定为
+#      ActaHandy-<版本>-<平台>-<架构>.zip，包内只放单个安装文件：
+#      · Windows：ActaHandy.exe（便携版单文件）
+#      · macOS：  ActaHandy-<版本>-macos-<架构>.dmg
+#                 （dmg 内为 .app + 「修复启动损坏.command」解锁脚本 + 说明）
+#      应用内更新器按同一套后缀识别平台包（见 updater.rs 的 asset_suffix）。
+#   3. publish —— 汇总产物、从 CHANGELOG 取更新说明、创建或更新 Release。
+#
+# 幂等：日常提交不重复构建——该版本的 Release 已存在时整个流水线跳过；
+# 手动触发（workflow_dispatch）视为强制重发，产物覆盖上传并纠正渠道标记。
+# 发版操作因此收敛为：改版本号 + 补 CHANGELOG 段落 + 推 main。
+#
+# build.yml 只做按需的构建验证（手动触发，不发 Release、不打 tag）。
+
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # ---- 第一步：读版本，定渠道与 tag --------------------------------------
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      skip: ${{ steps.meta.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Read version and decide channel
+        id: meta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          tag="v${version}"
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          else
+            prerelease=false
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          # 幂等门禁：Release 已存在且非手动触发 → 跳过；手动触发一律重发。
+          if [[ "${{ github.event_name }}" == "push" ]] && gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Release $tag already exists — skipping."
+            exit 0
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+      - name: Require a CHANGELOG section for this version
+        if: steps.meta.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          version="${{ steps.meta.outputs.version }}"
+          if ! grep -q "^## \[${version}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md 缺少 «## [${version}]» 段落——发版前先补更新说明。"
+            exit 1
+          fi
+      - name: Create tag for this version
+        if: steps.meta.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.meta.outputs.tag }}"
+          current_sha=$(git rev-parse HEAD)
+          # 浅克隆（checkout 默认 fetch-depth 1）没有本地 tags，统一查远端。
+          # tag 已存在时分两种情况：
+          # - 指向当前 HEAD：同一 commit 重跑，保留；
+          # - 指向别的 commit：那次 commit 的构建失败了才会走到这里
+          #   （Release 不存在才没被上面的门禁拦下）——删掉旧 tag 重打，
+          #   让 tag 跟随修复后的 HEAD，构建检出的一定是能出产物的代码。
+          remote_target=$(git ls-remote --tags origin "refs/tags/$tag" | awk '{print $1; exit}')
+          if [ -n "$remote_target" ]; then
+            if [ "$remote_target" = "$current_sha" ]; then
+              echo "Tag $tag already points at HEAD ($current_sha) — keeping it."
+              exit 0
+            fi
+            echo "Tag $tag exists at $remote_target but HEAD is $current_sha (previous build failed) — re-pointing the tag."
+            git push origin ":refs/tags/$tag"
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$tag"
+          git push origin "$tag"
+
+  # ---- 第二步：三个平台各出一个压缩包 ------------------------------------
+  windows-x64:
+    name: Windows x64 portable
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build portable exe
+        run: npm run windows:portable
+      - name: Collect exe into zip
+        shell: pwsh
+        run: |
+          # 包内只有单个可执行文件，且文件名固定为 ActaHandy.exe：更新器解压后
+          # 按用户磁盘上的原文件名放回原路径，压缩包里的名字只承担“认得出”的作用。
+          New-Item -ItemType Directory -Force -Path dist/payload | Out-Null
+          $exe = Get-ChildItem "src-tauri/target/x86_64-pc-windows-msvc/release" -Filter *.exe |
+            Sort-Object Length -Descending | Select-Object -First 1
+          if (-not $exe) { throw "No portable exe found in release output." }
+          Copy-Item $exe.FullName "dist/payload/ActaHandy.exe"
+          Compress-Archive -Path "dist/payload/ActaHandy.exe" `
+            -DestinationPath "dist/ActaHandy-${{ needs.prepare.outputs.version }}-windows-x64.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ActaHandy-${{ needs.prepare.outputs.version }}-windows-x64
+          path: dist/ActaHandy-*-windows-x64.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.arch }} dmg
+    needs: prepare
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-apple-darwin
+          - arch: x64
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build app bundle
+        # 只产出 .app；dmg 由下一步自行打包，以便放入「修复启动损坏」解锁脚本与说明
+        run: npx tauri build --bundles app --target ${{ matrix.target }}
+      - name: Strip quarantine from app bundle
+        shell: bash
+        run: |
+          # 未签名/未公证的 app 带着 quarantine 扩展属性时，Gatekeeper 会直接
+          # 报“已损坏”。构建产物里任何环节（工具链、缓存恢复）意外写入的
+          # quarantine 都在这里清掉，保证进入 dmg 的 .app 不带该属性。
+          app_path=$(ls -d src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app | head -n 1)
+          if [ -z "$app_path" ]; then echo "No app bundle found." >&2; exit 1; fi
+          sudo xattr -r -d com.apple.quarantine "$app_path" 2>/dev/null || true
+      - name: Package dmg with unlock script
+        shell: bash
+        run: bash scripts/dmg/package-dmg.sh "${{ needs.prepare.outputs.version }}" "${{ matrix.arch }}"
+      - name: Collect dmg into zip
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          # 包内只有单个 dmg：更新器解压出它、挂载、替换 .app，并取出其中的
+          # 解锁脚本用于清除隔离标记。
+          rm -f "dist/ActaHandy-${VERSION}-macos-${ARCH}.zip"
+          cd dist
+          zip -q "ActaHandy-${VERSION}-macos-${ARCH}.zip" "ActaHandy-${VERSION}-macos-${ARCH}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ActaHandy-${{ needs.prepare.outputs.version }}-macos-${{ matrix.arch }}
+          path: dist/ActaHandy-*-macos-*.zip
+          if-no-files-found: error
+
+  # ---- 第三步：发布 ------------------------------------------------------
+  publish:
+    name: Publish release
+    needs: [prepare, windows-x64, macos]
+    if: needs.prepare.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Extract release notes from CHANGELOG
+        run: |
+          set -euo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          # CHANGELOG 的版本标题形如 «## [1.1.0-beta1] - 2026-11-17»，截取该段
+          # 到下一个 «## » 标题（不含）之间的全部内容作为发布说明。
+          awk -v marker="## [${version}]" '
+            index($0, "## ") == 1 { if (found) exit; if (index($0, marker) == 1) { found = 1; next } }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::CHANGELOG 段落为空，改用自动生成的发布说明。"
+            rm -f release-notes.md
+          fi
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.tag }}"
+          title="Acta Handy v${{ needs.prepare.outputs.version }}"
+          if [[ "${{ needs.prepare.outputs.prerelease }}" == "true" ]]; then
+            channel="--prerelease"
+          else
+            channel="--latest"
+          fi
+          notes_args=()
+          if [ -f release-notes.md ]; then
+            notes_args=(--notes-file release-notes.md)
+          else
+            notes_args=(--generate-notes)
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # 补发/重发：覆盖产物并按版本号纠正渠道标记。
+            gh release upload "$tag" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$title" $channel
+          else
+            gh release create "$tag" artifacts/* --repo "$GITHUB_REPOSITORY" --title "$title" $channel "${notes_args[@]}"
+          fi

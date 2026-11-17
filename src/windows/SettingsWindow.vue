@@ -6,9 +6,16 @@ import { shortDate } from "../lib/format";
 import { t } from "../lib/i18n";
 import { initStore, persistSettings, refreshActaData, store } from "../lib/store";
 import {
-  onHudAnim,
+  applyUpdate,
+  checkAppUpdate,
+  downloadAppUpdate,
   onDataChanged,
+  onDownloadProgress,
+  onHudAnim,
   pickDataFolder,
+  probeUpdateSources,
+  quitApp,
+  readAppInfo,
   readHistory,
   refreshData,
   restoreHistory,
@@ -21,8 +28,7 @@ import RangeSlider from "../components/RangeSlider.vue";
 import SelectMenu from "../components/SelectMenu.vue";
 import type { IconName } from "../types/icons";
 import type { HistoryEntry } from "../types/history";
-
-const APP_VERSION = "1.0.0";
+import type { AppInfo, RouteProbe, SourceProbe, UpdateInfo } from "../lib/api";
 
 type SectionId = "data" | "todoWidget" | "notesWidget" | "hud" | "general" | "about";
 const active = ref<SectionId>("data");
@@ -133,6 +139,197 @@ async function save(): Promise<void> {
   await persistSettings(store.settings);
 }
 
+// --- 关于 · 应用内更新 -------------------------------------------------------
+// 流程：检查（按更新通道过滤）→ 用户决定是否下载（按下载源拼链接）→ 下载完
+// 成即开始读秒，归零后写任务单并退出，由安装进程换包；读秒期间随时可取消。
+
+const UPDATE_CHANNEL_OPTIONS = computed(() => [
+  { value: "stable", label: t("updateChannelStable") },
+  { value: "beta", label: t("updateChannelBeta") },
+]);
+const DOWNLOAD_SOURCE_OPTIONS = computed(() => [
+  { value: "github", label: t("downloadSourceGithub") },
+  { value: "proxy", label: t("downloadSourceProxy") },
+]);
+
+/** 读秒时长：够看清发生了什么，也够按下去取消。 */
+const AUTO_INSTALL_SECS = 6;
+
+type UpdateStage = "idle" | "checking" | "current" | "available" | "downloading" | "ready" | "applying" | "error";
+
+const appInfo = ref<AppInfo>({ version: "", prerelease: false });
+const updateStage = ref<UpdateStage>("idle");
+const updateInfo = ref<UpdateInfo | null>(null);
+const updateError = ref("");
+const downloadProgress = ref({ received: 0, total: 0, percent: 0 });
+const countdownLeft = ref(0);
+const payloadPath = ref("");
+const probe = ref<SourceProbe | null>(null);
+const probing = ref(false);
+const probeError = ref("");
+let countdownTimer: number | null = null;
+let unlistenDownload: (() => void) | null = null;
+
+/** 下载中与安装中不接受新的检查：这两步都有副作用，重复发起只会打架。 */
+const updateBusy = computed(
+  () => updateStage.value === "checking" || updateStage.value === "downloading" || updateStage.value === "applying",
+);
+
+function formatMb(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(1);
+}
+
+function stopCountdown(): void {
+  if (countdownTimer !== null) {
+    window.clearInterval(countdownTimer);
+    countdownTimer = null;
+  }
+  countdownLeft.value = 0;
+}
+
+async function checkUpdate(): Promise<void> {
+  if (updateBusy.value) return;
+  stopCountdown();
+  updateStage.value = "checking";
+  updateError.value = "";
+  updateInfo.value = null;
+  payloadPath.value = "";
+  try {
+    const found = await checkAppUpdate(store.settings.updateChannel);
+    updateInfo.value = found;
+    updateStage.value = found ? "available" : "current";
+  } catch (error) {
+    updateError.value = String(error);
+    updateStage.value = "error";
+  }
+}
+
+async function startDownload(): Promise<void> {
+  const target = updateInfo.value;
+  if (!target || updateStage.value !== "available") return;
+  updateStage.value = "downloading";
+  downloadProgress.value = { received: 0, total: target.size, percent: 0 };
+  try {
+    const path = await downloadAppUpdate(
+      target.url,
+      target.assetName,
+      target.size,
+      store.settings.downloadSource,
+    );
+    payloadPath.value = path;
+    // 下载途中用户可能已经关掉卡片：不再自动读秒。
+    if (updateStage.value !== "downloading") return;
+    beginCountdown();
+  } catch (error) {
+    updateError.value = String(error);
+    updateStage.value = "error";
+  }
+}
+
+/** 安装包就绪即开始读秒；归零自动重启安装。 */
+function beginCountdown(): void {
+  stopCountdown();
+  updateStage.value = "ready";
+  countdownLeft.value = AUTO_INSTALL_SECS;
+  countdownTimer = window.setInterval(() => {
+    countdownLeft.value -= 1;
+    if (countdownLeft.value <= 0) {
+      stopCountdown();
+      void installNow();
+    }
+  }, 1000);
+}
+
+/** 取消自动安装：停在就绪态，仍可手动重启或稍后再说。 */
+function cancelAutoInstall(): void {
+  stopCountdown();
+}
+
+async function installNow(): Promise<void> {
+  const target = updateInfo.value;
+  if (!target || !payloadPath.value) return;
+  stopCountdown();
+  updateStage.value = "applying";
+  try {
+    await applyUpdate(payloadPath.value, target.version);
+    await quitApp();
+  } catch (error) {
+    updateError.value = String(error);
+    updateStage.value = "error";
+  }
+}
+
+function dismissUpdate(): void {
+  stopCountdown();
+  updateStage.value = "idle";
+  updateInfo.value = null;
+  payloadPath.value = "";
+  updateError.value = "";
+}
+
+/** 卡片顶部的进度条：下载时走百分比，读秒时从空到满（离重启还有多近）。 */
+const updateTrackPercent = computed(() => {
+  if (updateStage.value === "downloading") return downloadProgress.value.percent;
+  if (updateStage.value === "ready" && countdownLeft.value > 0) {
+    // 读秒条是「离重启还有多久」的倒数：从空到满才是逼近动作，倒着走容易被读成
+    // 「已经装完了」。
+    return Math.round(((AUTO_INSTALL_SECS - countdownLeft.value) / AUTO_INSTALL_SECS) * 100);
+  }
+  return 0;
+});
+
+const updateStatusText = computed(() => {
+  switch (updateStage.value) {
+    case "downloading":
+      return t("updateSize")(
+        formatMb(downloadProgress.value.received),
+        formatMb(downloadProgress.value.total || updateInfo.value?.size || 0),
+        downloadProgress.value.percent,
+      );
+    case "ready":
+      return countdownLeft.value > 0 ? t("updateCountdown")(countdownLeft.value) : t("updateReady");
+    case "applying":
+      return t("updateApplying");
+    case "error":
+      return t("updateFailed")(updateError.value);
+    default:
+      return "";
+  }
+});
+
+async function runProbe(): Promise<void> {
+  if (probing.value) return;
+  probing.value = true;
+  probe.value = null;
+  probeError.value = "";
+  try {
+    probe.value = await probeUpdateSources(store.settings.updateChannel);
+  } catch (error) {
+    probeError.value = String(error);
+  } finally {
+    probing.value = false;
+  }
+}
+
+function probeLineText(route: RouteProbe): string {
+  if (route.error) return t("probeFailed")(route.label, route.error);
+  if (!route.ok) return t("probeUnreachable")(route.label, route.status);
+  return t("probeLine")(
+    route.label,
+    route.kbps.toLocaleString(),
+    (route.elapsedMs / 1000).toFixed(1),
+    formatMb(route.bytes),
+  );
+}
+
+/** 两条链路都通时，标出快的那一条；只有一条通就没什么可比的。 */
+const probeFasterRoute = computed<"direct" | "proxy" | null>(() => {
+  const current = probe.value;
+  if (!current?.direct.ok || !current.proxy.ok) return null;
+  if (current.direct.kbps === current.proxy.kbps) return null;
+  return current.direct.kbps > current.proxy.kbps ? "direct" : "proxy";
+});
+
 async function chooseFolder(): Promise<void> {
   const picked = await pickDataFolder();
   if (!picked) return;
@@ -213,6 +410,10 @@ onMounted(async () => {
   void onHudAnim((payload) => {
     hudBusy.value = payload.phase !== "end";
   });
+  appInfo.value = await readAppInfo().catch(() => appInfo.value);
+  unlistenDownload = await onDownloadProgress((progress) => {
+    if (updateStage.value === "downloading") downloadProgress.value = progress;
+  }).catch(() => null);
   await initStore();
   await loadHistory();
   // 小组件里的写入也会留档：数据一变就同步历史列表。
@@ -222,6 +423,8 @@ onMounted(async () => {
 });
 onBeforeUnmount(() => {
   unlistenResized?.();
+  unlistenDownload?.();
+  stopCountdown();
 });
 </script>
 
@@ -475,10 +678,126 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <div class="meta-grid">
-            <div><small>{{ t("version") }}</small><b>v{{ APP_VERSION }}</b></div>
+            <div>
+              <small>{{ t("version") }}</small>
+              <b>v{{ appInfo.version || "—" }}</b>
+              <em v-if="appInfo.prerelease" class="beta-tag">{{ t("updateBetaTag") }}</em>
+            </div>
             <div><small>{{ t("author") }}</small><b>MogroWang Studio</b></div>
             <div><small>{{ t("license") }}</small><b>MIT</b></div>
             <div><small>{{ t("basedOn") }}</small><b>Acta · 行记</b></div>
+          </div>
+
+          <!-- 更新 -->
+          <div class="update">
+            <div class="update-head">
+              <span class="update-heading">
+                <b>{{ t("updateTitle") }}</b>
+                <small>{{ t("updateCurrentVersion")(appInfo.version || "—") }}</small>
+              </span>
+              <button class="settings-button secondary" :disabled="updateBusy" @click="checkUpdate">
+                <AppIcon name="refresh" :size="13" />
+                {{ updateStage === "checking" ? t("updateChecking") : t("updateCheck") }}
+              </button>
+            </div>
+
+            <div class="group">
+              <div class="row">
+                <span class="row-copy">
+                  <b>{{ t("updateChannel") }}</b>
+                  <small>{{ t("updateChannelDesc") }}</small>
+                </span>
+                <SelectMenu
+                  v-model="store.settings.updateChannel"
+                  :options="UPDATE_CHANNEL_OPTIONS"
+                  @update:model-value="save"
+                />
+              </div>
+              <div class="row">
+                <span class="row-copy">
+                  <b>{{ t("downloadSource") }}</b>
+                  <small>{{ t("downloadSourceDesc") }}</small>
+                </span>
+                <span class="row-actions">
+                  <SelectMenu
+                    v-model="store.settings.downloadSource"
+                    :options="DOWNLOAD_SOURCE_OPTIONS"
+                    @update:model-value="save"
+                  />
+                  <button class="settings-button secondary" :disabled="probing" @click="runProbe">
+                    <AppIcon name="globe" :size="13" />
+                    {{ probing ? t("probing") : t("probeSpeed") }}
+                  </button>
+                </span>
+              </div>
+            </div>
+
+            <p v-if="probe || probeError" class="probe">
+              <template v-if="probeError">{{ t("probeSampleFailed")(probeError) }}</template>
+              <template v-else-if="probe">
+                <span class="probe-line" :class="{ fast: probeFasterRoute === 'direct' }">
+                  {{ probeLineText(probe.direct) }}
+                  <em v-if="probeFasterRoute === 'direct'">{{ t("probeFaster") }}</em>
+                </span>
+                <span class="probe-line" :class="{ fast: probeFasterRoute === 'proxy' }">
+                  {{ probeLineText(probe.proxy) }}
+                  <em v-if="probeFasterRoute === 'proxy'">{{ t("probeFaster") }}</em>
+                </span>
+              </template>
+            </p>
+
+            <p v-if="updateStage === 'current'" class="status ok">{{ t("updateCurrent") }}</p>
+            <p v-if="updateStage === 'error' && !updateInfo" class="status error">{{ updateStatusText }}</p>
+
+            <!-- 发现新版本：是否下载由用户决定；下载完成读秒，读秒可取消。 -->
+            <div v-if="updateInfo && updateStage !== 'current'" class="update-card">
+              <div class="update-title">
+                <b>{{ t("updateFound")(updateInfo.version) }}</b>
+                <em v-if="updateInfo.prerelease" class="beta-tag">{{ t("updateBetaTag") }}</em>
+                <span class="update-size">{{ formatMb(updateInfo.size) }} MB</span>
+              </div>
+              <p class="update-notes">{{ updateInfo.notes || t("updateNotesEmpty") }}</p>
+              <div
+                v-if="updateStage === 'downloading' || updateStage === 'ready' || updateStage === 'applying'"
+                class="update-track"
+                :class="{ idle: updateTrackPercent === 0, ticking: updateStage === 'ready' && countdownLeft > 0 }"
+              >
+                <i :style="{ width: `${updateTrackPercent}%` }" />
+              </div>
+              <p v-if="updateStatusText" class="update-status" :class="{ error: updateStage === 'error' }">
+                {{ updateStatusText }}
+              </p>
+              <div class="update-actions">
+                <button
+                  v-if="updateStage === 'available'"
+                  class="settings-button secondary"
+                  @click="dismissUpdate"
+                >
+                  {{ t("updateLater") }}
+                </button>
+                <button
+                  v-else-if="updateStage === 'ready'"
+                  class="settings-button secondary"
+                  @click="countdownLeft > 0 ? cancelAutoInstall() : dismissUpdate()"
+                >
+                  {{ countdownLeft > 0 ? t("updateCancelAuto") : t("updateLater") }}
+                </button>
+                <button
+                  v-else-if="updateStage === 'error'"
+                  class="settings-button secondary"
+                  @click="dismissUpdate"
+                >
+                  {{ t("updateDismiss") }}
+                </button>
+
+                <button v-if="updateStage === 'available'" class="settings-button" @click="startDownload">
+                  {{ t("updateDownload") }}
+                </button>
+                <button v-else-if="updateStage === 'ready'" class="settings-button" @click="installNow">
+                  {{ t("updateRestartNow") }}
+                </button>
+              </div>
+            </div>
           </div>
         </section>
       </main>
@@ -649,7 +968,55 @@ onBeforeUnmount(() => {
 .meta-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
 .meta-grid div { padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: color-mix(in srgb, var(--white) 40%, transparent); }
 .meta-grid small { display: block; margin-bottom: 4px; color: var(--faint); font-size: 11px; }
-.meta-grid b { font-size: 13px; }
+.meta-grid b { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+
+/* 预发布标记：只在测试版出现，配色沿用主题色，不做第二种强调色。 */
+.beta-tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--sage-2);
+  color: var(--sage);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 650;
+  letter-spacing: .02em;
+}
+
+/* --- 关于 · 更新 --- */
+.update { margin-top: 26px; }
+.update-head { display: flex; align-items: center; gap: 12px; margin: 0 2px 12px; }
+.update-heading { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.update-heading b { font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.update-heading small { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* 测速结果与设置分组同一套文字节奏：数字用等宽数位，快的那条走主题色。 */
+.probe { margin: 11px 2px 0; display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.probe-line { display: inline-flex; align-items: baseline; gap: 6px; }
+.probe-line.fast { color: var(--sage); }
+.probe-line em { font-style: normal; font-size: 10.5px; font-weight: 650; }
+
+.update-card {
+  margin-top: 12px;
+  padding: 15px 16px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--white) 40%, transparent);
+  animation: panelIn .3s var(--ease-out) both;
+}
+.update-title { display: flex; align-items: baseline; gap: 8px; }
+.update-title b { font-size: 13.5px; font-weight: 650; letter-spacing: -.01em; }
+.update-size { margin-left: auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.update-notes { margin: 8px 0 0; max-height: 84px; overflow: auto; color: var(--muted); font-size: 12px; line-height: 1.6; white-space: pre-line; }
+
+/* 下载走百分比、读秒走倒数进度：同一条 3px 轨道，读秒时线性推进。 */
+.update-track { height: 3px; margin: 14px 0 9px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.update-track.idle { background: color-mix(in srgb, var(--line) 55%, transparent); }
+.update-track i { display: block; height: 100%; border-radius: 2px; background: var(--sage); transition: width .3s var(--ease-out); }
+.update-track.ticking i { transition: width 1s linear; }
+
+.update-status { margin: 0; min-height: 15px; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.update-status.error { color: var(--priority-high-ink); }
+.update-actions { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
 
 @keyframes panelIn {
   0% { opacity: 0; transform: translateY(12px); }

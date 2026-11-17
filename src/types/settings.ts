@@ -55,6 +55,11 @@ export interface MainWindowConfig {
 
 export type FontChoice = "system" | "serif" | "kai" | "rounded";
 
+/** 更新通道：稳定通道只收正式版，测试通道连预发布一起收。 */
+export type UpdateChannel = "stable" | "beta";
+/** 下载源：GitHub Raw 原生直链，或经 GitHub-proxy 加速。 */
+export type DownloadSource = "github" | "proxy";
+
 export interface HandySettings {
   version: number;
   dataFolder: string;
@@ -69,6 +74,8 @@ export interface HandySettings {
   todoWidget: WidgetConfig;
   notesWidget: WidgetConfig;
   hud: HudConfig;
+  updateChannel: UpdateChannel;
+  downloadSource: DownloadSource;
 }
 
 export const DEFAULT_SETTINGS: HandySettings = {
@@ -113,4 +120,6 @@ export const DEFAULT_SETTINGS: HandySettings = {
     stealthDelaySecs: 15,
     color: "auto",
   },
+  updateChannel: "stable",
+  downloadSource: "github",
 };

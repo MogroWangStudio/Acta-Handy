@@ -6,7 +6,32 @@
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-10-25
+## [1.1.0-beta1] - 2026-11-17
+
+发版方式换了一套：版本号说了算的 Release 流水线、三平台压缩包，外加应用内自助更新。
+
+### 新增
+
+- **应用内更新**：设置 → 关于新增「软件更新」——检查 GitHub Release、显示新版本号与更新说明，由你决定是否下载；下载完成即开始读秒，归零后自动重启安装，读秒期间随时可以「取消自动安装」，停在就绪态再决定何时重启。Windows 换代的是 exe 本身（旧文件先改名为 `*.handy-old`，新版本启动时清理），macOS 挂载更新包里的 dmg、替换 `.app` 并自动清除隔离标记——只有应用归 root 所有等少数情况才会弹出更新包里自带的解锁脚本让你输入一次密码。
+- **更新通道**：稳定通道（Release）只收正式版；测试通道（Pre-Release）连 `x.y.z-betax` 一起收。判定规则与发布流水线同源：tag 含 `-` 即预发布，正式版永远大于同号预发布。
+- **下载源与测速**：GitHub Raw 走原生直链，GitHub-proxy 经 gh-proxy 加速。旁边的「测速」会拿最近一次发布里当前平台的安装包做样本，两条链路各读 1 MB 计时，报出速度并标出更快的那条——网络不通畅时先测一下，再决定用哪个源。
+- **关于页显示真实版本**：版本号与是否预发布由后端读取打包版本给出，不再在前端写死一个常量。
+
+### 变更
+
+- **发版流程自动化**：新增 `.github/workflows/release.yml`——推送到 `main` 后先读 `src-tauri/tauri.conf.json` 的版本号：`x.y.z` 直接发正式 Release 并标记 latest，`x.y.z-betax` 发 Pre-Release；该版本的 Release 已存在时整条流水线跳过（手动触发视为强制重发）。随后三平台并行构建，最后从 CHANGELOG 摘出该版本段落作为发布说明。
+- **产物改为三个平台的压缩包**，命名 `ActaHandy-<版本>-<平台>-<架构>.zip`，包内只放单个安装文件，便于应用内更新按后缀识别：
+  - `ActaHandy-<版本>-windows-x64.zip` — 包内 `ActaHandy.exe`（便携版单文件）
+  - `ActaHandy-<版本>-macos-arm64.zip` — 包内 `ActaHandy-<版本>-macos-arm64.dmg`
+  - `ActaHandy-<版本>-macos-x64.zip` — 包内 `ActaHandy-<版本>-macos-x64.dmg`
+
+  macOS 的 dmg 里放 `.app`、Applications 软链、解锁脚本「修复启动损坏.command」与「损坏修复说明.txt」；同时新增 Intel 芯片的构建，Apple Silicon 与 Intel 的 Mac 各有对应包。
+- **CI 不再自动构建**：原来「推送到 main 就构建两平台 artifact、推 `v*` 标签就发版」的触发全部移除；`build.yml` 改为手动触发、只产三份压缩包作验证用，发版只由 `release.yml` 负责，避免同一个 commit 白跑一轮。
+
+### 修复
+
+- **浏览器预览的事件错投**：开发用 mock 把任何事件都广播给全部监听器，进度事件会把设置对象覆盖成 `{received, total, percent}`，导致「关于」页的下拉框空白。现在按事件名分发，各监听器只收到自己订阅的事件。
+
 
 一点仪式感的版本：主题与 Acta 完全对齐，按钮与滑动条按桌面品质重绘，顺带清了四处小问题。
 

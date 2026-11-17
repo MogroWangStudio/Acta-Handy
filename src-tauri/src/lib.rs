@@ -3,6 +3,7 @@
 mod acta;
 mod history;
 mod settings;
+mod updater;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -385,6 +386,44 @@ fn show_window(app: AppHandle, label: String) {
 #[tauri::command]
 fn quit_app(app: AppHandle) {
     app.exit(0);
+}
+
+// --- 应用内更新 ------------------------------------------------------------
+// 具体流程在 updater.rs：这里只做 #[tauri::command] 薄包装，参数命名与前端
+// api.ts 一一对应（Tauri 负责 camelCase ↔ snake_case 的转换）。
+
+#[tauri::command]
+async fn check_app_update(app: AppHandle, channel: Option<String>) -> Result<Option<updater::UpdateInfo>, String> {
+    updater::check_for_update(app, channel).await
+}
+
+#[tauri::command]
+async fn download_app_update(
+    window: WebviewWindow,
+    url: String,
+    asset_name: String,
+    expected_size: u64,
+    source: Option<String>,
+) -> Result<String, String> {
+    updater::download_update(window, url, asset_name, expected_size, source).await
+}
+
+/// 写任务单并拉起安装进程；前端随后调用 quit_app，安装进程等本进程退出后换包。
+#[tauri::command]
+async fn apply_update(app: AppHandle, payload: String, version: String) -> Result<bool, String> {
+    updater::prepare_restart(&app, payload, version)
+}
+
+/// 两条下载链路各读 1 MB 计时，比较可用性与速度。
+#[tauri::command]
+async fn probe_update_sources(channel: Option<String>) -> Result<updater::SourceProbe, String> {
+    updater::probe_sources(channel).await
+}
+
+/// 关于页显示的版本号：取自打包版本，不在前端硬编码。
+#[tauri::command]
+fn app_info(app: AppHandle) -> updater::AppInfo {
+    updater::app_info(&app)
 }
 
 /// hud-panel 窗口的落位：以 Handy 窗口当前位姿为锚——卡片贴着 Handy 图形
@@ -1604,6 +1643,11 @@ fn keep_webview_data_portable() {
 }
 
 pub fn run() {
+    // 安装模式：主进程退出后由同一个二进制把自己的映像换掉，再启动新版本。
+    // 这一步必须在 Tauri 之前分流——安装进程不建窗口、不加载前端。
+    if let Some(manifest) = updater::apply_request_from_args() {
+        updater::run_apply(&manifest);
+    }
     #[cfg(windows)]
     keep_webview_data_portable();
     tauri::Builder::default()
@@ -1632,6 +1676,11 @@ pub fn run() {
             set_hud_eye_watch,
             set_hud_cursor_watch,
             popup_hud_menu,
+            check_app_update,
+            download_app_update,
+            apply_update,
+            probe_update_sources,
+            app_info,
             settings::load_settings,
             settings::save_settings
         ])
@@ -1639,6 +1688,8 @@ pub fn run() {
             let handle = app.handle().clone();
             #[cfg(windows)]
             fix_windows_window_icons(&handle);
+            // 上一次更新留下的旧 exe（*.handy-old）由新版本收尾清理。
+            updater::cleanup_stale_backup();
             let s = settings::load_from_disk(&handle);
             apply_windows(&handle, &s);
             setup_tray(&handle)?;

@@ -1,6 +1,6 @@
 {
   "name": "acta-handy",
-  "version": "1.0.0",
+  "version": "1.1.0-beta1",
   "description": "Acta Handy 行记·便易 — 把 Acta 的行记数据带到桌面上：待办小组件、笔记小组件与 Handy。",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,8 @@
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "windows:portable": "tauri build --no-bundle --target x86_64-pc-windows-msvc",
+    "macos:app": "tauri build --bundles app --target aarch64-apple-darwin",
+    "macos:app:x64": "tauri build --bundles app --target x86_64-apple-darwin",
     "macos:build": "tauri build --bundles app,dmg --target aarch64-apple-darwin"
   },
   "keywords": [
